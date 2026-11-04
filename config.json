@@ -1,0 +1,21 @@
+{
+    "color_fondo": "#00a5a8",
+    "color_letra": "#141414",
+    "tamano_letra": "20px",
+    "fuente": "Arial, sans-serif, Arial black, Helvetica, sans-serif",
+    "formas_pago": [
+        "Efectivo",
+        "Tarjeta",
+        "Transferencia"
+    ],
+    "mesas": 15,
+    "impuesto": 16,
+    "color_boton": "#4CAF50",
+    "color_letra_boton": "#ffffff",
+    "tamano_letra_boton": "16px",
+    "fuente_boton": "Arial, sans-serif, Arial black, Helvetica, sans-serif",
+    "color_boton_hover": "#45a049",
+    "color_letra_boton_hover": "#ffffff",
+    "tamano_letra_boton_hover": "16px",
+    "fuente_boton_hover": "Arial, sans-serif, Arial black, Helvetica, sans-serif"
+}

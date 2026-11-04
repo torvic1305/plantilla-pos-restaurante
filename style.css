@@ -1,0 +1,103 @@
+:root {
+    --fondo: #f58610db;
+    --letra: #000;
+    --tamano: 16px;
+    --fuente: Arial, sans-serif;
+}
+
+body {
+    font-family: var(--fuente);
+    background-color: var(--fondo);
+    color: var(--letra);
+    font-size: var(--tamano);
+    margin: 0;
+    padding: 20px;
+}
+
+.login-container {
+    max-width: 400px;
+    margin: 100px auto;
+    padding: 20px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+.login-container h2 {
+    text-align: center;
+}
+
+.login-container form {
+    display: flex;
+    flex-direction: column;
+}
+
+.login-container label {
+    margin-top: 10px;
+}
+
+.login-container input {
+    padding: 8px;
+    margin-top: 5px;
+}
+
+.login-container button {
+    margin-top: 20px;
+    padding: 10px;
+    background: #007bff;
+    color: white;
+    border: none;
+    cursor: pointer;
+}
+
+header {
+    background: #333;
+    color: white;
+    padding: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+nav a {
+    color: white;
+    margin: 0 10px;
+    text-decoration: none;
+}
+
+.pos-container {
+    display: flex;
+    gap: 20px;
+}
+
+.mesas-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
+}
+
+.mesa-btn {
+    padding: 10px;
+    background: #f0f0f0;
+    border: 1px solid #ccc;
+    cursor: pointer;
+}
+
+.menu-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+}
+
+.menu-item {
+    padding: 10px;
+    background: #f0f0f0;
+    border: 1px solid #ccc;
+    cursor: pointer;
+}
+
+.orden {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+}
