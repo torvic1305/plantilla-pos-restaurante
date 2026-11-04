@@ -11,7 +11,7 @@ Sistema de punto de venta profesional para restaurante construido con HTML5, CSS
 - ✅ Notas especiales por item (instrucciones de cocina)
 - ✅ Descuentos manuales y automáticos (promociones)
 - ✅ Cálculo automático de impuestos
-- ✅ Múltiples formas de pago (Efectivo, Tarjeta, Transferencia)
+- ✅ Formas de pago configurables y desglose por método en el cierre de caja
 - ✅ Cálculo de cambio para efectivo
 - ✅ Sistema de propinas con quick-select (0%, 10%, 15%, 20%)
 - ✅ Suspensión y reanudación de ventas
@@ -21,6 +21,7 @@ Sistema de punto de venta profesional para restaurante construido con HTML5, CSS
 - ✅ Pre-recibo (preview del cliente)
 - ✅ Recibo final completo
 - ✅ Comandas separadas para cocina y barra
+- ✅ Envío de recibos y comandas a impresoras térmicas de red ESC/POS por estación
 - ✅ Impresión directo a impresora de recibos 80mm
 - ✅ Reimpresión de documentos (desde POS e informes)
 - ✅ Cierre de caja con impresión
@@ -41,7 +42,8 @@ Sistema de punto de venta profesional para restaurante construido con HTML5, CSS
 - ✅ Kitchen Display System (KDS) para cocina
 - ✅ Cierre de caja diario con resumen completo
 - ✅ Auditoría de todas las operaciones
-- ✅ Configuración personalizable
+- ✅ Configuración personalizable de impuestos, mesas, POS, recibos y apariencia
+- ✅ Permisos granulares por empleado, validados también en el servidor
 
 ### Seguridad
 - ✅ Autenticación obligatoria
@@ -53,8 +55,8 @@ Sistema de punto de venta profesional para restaurante construido con HTML5, CSS
 
 ## Instalación
 
-1. Configura MySQL en tu servidor (usuario 'root', sin contraseña por defecto en desarrollo).
-2. Ejecuta `setup.php` en tu navegador: `http://localhost/restaurante/setup.php`
+1. Inicia MySQL y configura `DB_HOST`, `DB_NAME`, `DB_USER` y `DB_PASS` en Apache si no usas los valores predeterminados (`localhost`, `restaurante_pos`, `root`, sin contraseña).
+2. Ejecuta `setup.php` en tu navegador: `http://localhost/restaurante/setup.php`. El instalador crea y actualiza las tablas; requiere MySQL 5.7.8 o posterior.
 3. Accede a `index.php` para iniciar sesión.
 
 ## Usuarios por Defecto

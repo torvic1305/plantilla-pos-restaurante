@@ -4,6 +4,7 @@ include 'security.php';
 
 requireMethod('POST');
 requirePermission('pos');
+requirePermission('ventas_suspendidas_ver');
 if (!isset($_SESSION['user'])) {
     http_response_code(401);
     jsonResponse('error', 'No autorizado');
@@ -12,12 +13,21 @@ if (!isset($_SESSION['user'])) {
 
 try {
     $data = json_decode(file_get_contents('php://input'), true);
-    $csrf_token = trim($data['csrf_token'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
+    if (!is_array($data)) {
+        throw new Exception('Datos inválidos');
+    }
+    $csrfInput = $data['csrf_token'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
+    $csrf_token = is_string($csrfInput) ? trim($csrfInput) : '';
     if (!validateCsrfToken($csrf_token)) {
         throw new Exception('Token de seguridad inválido');
     }
-    if (!is_array($data) || empty($data['id']) || empty($data['tipo_pago'])) {
+    if (empty($data['id']) || !is_string($data['tipo_pago'] ?? null) || empty($data['tipo_pago'])) {
         throw new Exception('Datos inválidos');
+    }
+
+    $appConfig = getAppConfig();
+    if (!in_array($data['tipo_pago'], $appConfig['formas_pago'], true)) {
+        throw new Exception('La forma de pago ya no está habilitada. Actualice el POS e inténtelo de nuevo.');
     }
 
     $id = validateInteger($data['id'], 1);
@@ -65,15 +75,18 @@ try {
         throw new Exception('Descuento inválido');
     }
 
-    $total = 0;
+    $subtotal = 0;
     foreach ($orden_actualizada as $item) {
         $cantidad = max(1, intval($item['cantidad'] ?? 1));
-        $total += floatval($item['precio'] ?? 0) * $cantidad;
+        $subtotal += floatval($item['precio'] ?? 0) * $cantidad;
     }
-    if ($total <= 0) {
+    if ($subtotal <= 0 || $descuento > $subtotal) {
         throw new Exception('Total de la orden inválido');
     }
 
+    $baseImponible = max(0, $subtotal - $descuento);
+    $impuesto = round($baseImponible * (float) ($appConfig['impuesto'] ?? 0) / 100, 2);
+    $total = $baseImponible + $impuesto;
     if ($tipo_pago === 'Efectivo' && $monto_pagado < $total) {
         throw new Exception('El monto pagado debe ser mayor o igual al total para efectivo');
     }
@@ -82,7 +95,7 @@ try {
     }
 
     updateVentaOrden($venta['id'], $orden_actualizada);
-    completarVenta($venta['id'], $tipo_pago, $propina, $monto_pagado, $descuento);
+    completarVenta($venta['id'], $tipo_pago, $propina, $monto_pagado, $descuento, $impuesto);
     registrarAuditoria($_SESSION['user']['id'], 'COMPLETAR_SUSPENDIDA', 'VENTA', $venta['id'], "Propina: {$propina}, Monto pagado: {$monto_pagado}");
 
     header('Content-Type: application/json');

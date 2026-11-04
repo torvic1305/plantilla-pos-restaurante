@@ -111,19 +111,29 @@ function escapeJsonAttribute($data)
  */
 function requirePermission($permiso)
 {
+    global $pdo;
+
     if (!isset($_SESSION['user'])) {
         http_response_code(401);
         echo json_encode(['status' => 'error', 'message' => 'No autorizado']);
         exit;
     }
 
-    $permisos = $_SESSION['user']['permisos'] ?? [];
-    if (is_string($permisos)) {
-        $permisos = json_decode($permisos, true);
+    if (!($pdo instanceof PDO)) {
+        http_response_code(503);
+        echo json_encode(['status' => 'error', 'message' => 'No se pudo verificar el permiso en la base de datos.']);
+        exit;
     }
-    if (!is_array($permisos)) {
-        $permisos = [];
+
+    try {
+        $permisos = getPermisos((int) $_SESSION['user']['id']);
+    } catch (PDOException $e) {
+        error_log('Permission check failed: ' . $e->getMessage());
+        http_response_code(503);
+        echo json_encode(['status' => 'error', 'message' => 'No se pudo verificar el permiso en la base de datos.']);
+        exit;
     }
+    $_SESSION['user']['permisos'] = $permisos;
 
     if (!($permisos[$permiso] ?? false)) {
         http_response_code(403);

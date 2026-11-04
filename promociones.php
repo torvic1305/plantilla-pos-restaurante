@@ -6,10 +6,7 @@ if (!isset($_SESSION['user'])) {
     exit;
 }
 
-if (!($_SESSION['user']['permisos']['promociones'] ?? false)) {
-    header('Location: dashboard.php');
-    exit;
-}
+requirePermission('promociones');
 ?>
 <!DOCTYPE html>
 <html lang="es">

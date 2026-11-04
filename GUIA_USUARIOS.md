@@ -6,14 +6,22 @@
 - URL: `http://localhost/restaurante/`
 - Usuario: **admin**
 - Contraseña: **pointofsale**
+- Al actualizar una instalación existente, respalda la base de datos y ejecuta `setup.php` una vez para aplicar las columnas nuevas.
 
 ### 2. Configuración Inicial (Gerente)
 1. Ve a **Dashboard** → **Configuración**
-2. Configura el **Porcentaje de Impuesto** (ej: 16% para IVA)
-3. Ajusta el **Número de Mesas**
-4. Define las **Formas de Pago** disponibles
-5. Personaliza **Colores y Estilos** si deseas
-6. Haz clic en **Guardar Configuración**
+2. Configura el **Nombre del restaurante**
+3. Configura el **Porcentaje de Impuesto** (ej: 16% para IVA)
+4. Ajusta el **Número de Mesas** y decide si se permiten ventas de mostrador
+5. Define las **Formas de Pago** y el método predeterminado
+6. Configura el efectivo mínimo de caja para recibir alertas en el Dashboard
+7. Elige las opciones del POS, confirmación de cobro y campos del recibo
+8. En **Impresoras y comandas**, configura IP privada y puerto (normalmente `9100`) para recibos, cocina y barra. Deja una IP vacía para usar el diálogo del navegador.
+9. Escribe las categorías que deben ir a barra, una por línea; las demás categorías se mandan a cocina. Guarda y prueba cada impresora.
+10. Personaliza **Colores y Estilos** si deseas
+11. Haz clic en **Guardar Configuración**
+
+La impresión ESC/POS por red requiere que el servidor donde se ejecuta PHP pueda conectarse por TCP a cada impresora. Usa impresoras ESC/POS compatibles con impresión directa de red; esta opción no descubre impresoras automáticamente.
 
 ### 3. Crear Empleados
 1. Ve a **Empleados**
@@ -23,6 +31,11 @@
    - **Mesero**: Toma pedidos en el POS
    - **Cocinero**: Ve comandas en Cocina
    - **Gerente**: Acceso a todas las funciones
+5. Ajusta los permisos individuales del empleado y guarda los cambios. Los permisos se verifican en el servidor; ocultar un enlace no es la única protección.
+
+Los permisos disponibles cubren el POS, lectura y edición del menú, clientes e inventario, empleados, informes, mermas, promociones, configuración, cocina, cierre de caja, propinas y consulta/eliminación de ventas suspendidas. Los nuevos empleados reciben permisos iniciales según su rol; el gerente tiene todos los permisos por defecto.
+
+Las ventas con formas de pago personalizadas también aparecen con su propio total en el desglose del cierre de caja y se guardan como “otros métodos” en el registro del cierre.
 
 ### 4. Crear Menú
 1. Ve a **Menú**
@@ -75,6 +88,8 @@
    - **Comandas** para cocina/barra (si hay items de comida/bebida)
 7. Aparece panel de **Propina** (opcional)
 8. Sistema listo para siguiente venta
+
+También puedes iniciar una venta desde el acceso **Comenzar una venta** del panel principal.
 
 ### Agregar Propina (Después de Cobrar)
 1. Después de cobrar, aparece el panel de propina

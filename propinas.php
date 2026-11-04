@@ -1,10 +1,11 @@
 <?php
 include 'data.php';
 include 'security.php';
-if (!isset($_SESSION['user']) || !($_SESSION['user']['permisos']['informes'] ?? false)) {
+if (!isset($_SESSION['user'])) {
     header('Location: dashboard.php');
     exit;
 }
+requirePermission('propinas');
 
 function validateDateParam($value, $default)
 {

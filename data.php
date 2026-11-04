@@ -12,88 +12,16 @@ $user = getenv('DB_USER') ?: 'root';
 $pass = getenv('DB_PASS') ?: '';
 $pdo = null;
 try {
-    $pdo = new PDO("mysql:host=$host", $user, $pass);
-    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-    $pdo->exec("CREATE DATABASE IF NOT EXISTS `$db` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
-    $pdo->exec("USE `$db`");
-    try {
-        $pdo->exec("ALTER TABLE ventas ADD COLUMN tipo_pago VARCHAR(100) NULL");
-    } catch (PDOException $inner) {
-        // La columna ya existe o no hay tabla aún
-    }
-    try {
-        $pdo->exec("ALTER TABLE ventas ADD COLUMN monto_pagado DECIMAL(10,2) DEFAULT 0");
-    } catch (PDOException $inner) {
-        // La columna ya existe o no hay tabla aún
-    }
-    try {
-        $pdo->exec("ALTER TABLE ventas ADD COLUMN descuento DECIMAL(10,2) DEFAULT 0");
-    } catch (PDOException $inner) {
-        // La columna ya existe o no hay tabla aún
-    }
-    try {
-        $pdo->exec("ALTER TABLE ventas ADD COLUMN impuesto DECIMAL(10,2) DEFAULT 0");
-    } catch (PDOException $inner) {
-        // La columna ya existe o no hay tabla aún
-    }
-    // Crear tabla de auditoría si no existe
-    try {
-        $pdo->exec("CREATE TABLE IF NOT EXISTS audit_log (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            usuario_id INT,
-            accion VARCHAR(255),
-            entidad VARCHAR(100),
-            entidad_id INT,
-            descripcion TEXT,
-            fecha DATETIME DEFAULT CURRENT_TIMESTAMP
-        )");
-    } catch (PDOException $inner) {
-        // La tabla ya existe
-    }
-    // Tabla cierres de caja
-    try {
-        $pdo->exec("CREATE TABLE IF NOT EXISTS cierres_caja (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            usuario_id INT,
-            fecha DATE,
-            total_ventas DECIMAL(10,2) DEFAULT 0,
-            total_efectivo DECIMAL(10,2) DEFAULT 0,
-            total_tarjeta DECIMAL(10,2) DEFAULT 0,
-            total_transferencia DECIMAL(10,2) DEFAULT 0,
-            total_descuentos DECIMAL(10,2) DEFAULT 0,
-            total_impuestos DECIMAL(10,2) DEFAULT 0,
-            total_propinas DECIMAL(10,2) DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )");
-    } catch (PDOException $inner) {
-        // La tabla ya existe
-    }
-    try {
-        $pdo->exec("CREATE TABLE IF NOT EXISTS clientes (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            nombre VARCHAR(255) NOT NULL,
-            telefono VARCHAR(50),
-            email VARCHAR(255),
-            direccion TEXT,
-            creado TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )");
-    } catch (PDOException $inner) {
-        // La tabla ya existe
-    }
-    try {
-        $pdo->exec("CREATE TABLE IF NOT EXISTS inventario (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            item VARCHAR(255),
-            cantidad INT DEFAULT 0,
-            cantidad_minima INT DEFAULT 0,
-            cantidad_maxima INT DEFAULT 0,
-            precio_costo DECIMAL(10,2),
-            proveedor VARCHAR(255),
-            ultima_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        )");
-    } catch (PDOException $inner) {
-        // La tabla ya existe
-    }
+    $pdo = new PDO(
+        "mysql:host=$host;dbname=$db;charset=utf8mb4",
+        $user,
+        $pass,
+        [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_EMULATE_PREPARES => false,
+        ]
+    );
+    $pdo->query('SELECT 1 FROM empleados LIMIT 0');
 } catch (PDOException $e) {
     $dbError = $e->getMessage();
     $pdo = null;
@@ -102,25 +30,195 @@ try {
 function getAppConfig()
 {
     $default = [
-        'color_fondo' => '#f58610db',
-        'color_letra' => '#000',
-        'tamano_letra' => '16px',
+        'nombre_restaurante' => 'Restaurante POS',
+        'color_fondo' => '#edf0f4',
+        'color_letra' => '#303642',
         'fuente' => 'Arial, sans-serif',
         'formas_pago' => ['Efectivo', 'Tarjeta', 'Transferencia'],
-        'mesas' => 20
+        'metodo_pago_default' => 'Efectivo',
+        'mesas' => 20,
+        'impuesto' => 0,
+        'cash_alert_threshold' => 0,
+        'pos_focus_search' => true,
+        'pos_confirmar_venta' => true,
+        'pos_require_table' => true,
+        'recibo_titulo' => 'Restaurante POS',
+        'recibo_pie' => 'Gracias por su compra',
+        'recibo_mostrar_fecha' => true,
+        'recibo_mostrar_precios' => true,
+        'recibo_mostrar_impuestos' => true,
+        'recibo_mostrar_descuentos' => true,
+        'impresora_recibo_ip' => '',
+        'impresora_recibo_puerto' => 9100,
+        'impresora_cocina_ip' => '',
+        'impresora_cocina_puerto' => 9100,
+        'impresora_barra_ip' => '',
+        'impresora_barra_puerto' => 9100,
+        'impresora_categorias_barra' => [],
+        'color_boton' => '#368fdb',
+        'color_boton_hover' => '#1768ad',
     ];
-    if (file_exists('config.json')) {
-        $saved = json_decode(file_get_contents('config.json'), true);
+    $configPath = __DIR__ . '/config.json';
+    if (is_file($configPath)) {
+        $saved = json_decode(file_get_contents($configPath), true);
         if (is_array($saved)) {
-            return array_merge($default, $saved);
+            $config = array_merge($default, $saved);
+            if (!is_array($config['formas_pago'])) {
+                $config['formas_pago'] = $default['formas_pago'];
+            }
+            $config['formas_pago'] = array_values(array_unique(array_filter(
+                $config['formas_pago'],
+                static fn($payment) => is_string($payment) && trim($payment) !== ''
+            )));
+            if ($config['formas_pago'] === []) {
+                $config['formas_pago'] = $default['formas_pago'];
+            }
+            if (!in_array($config['metodo_pago_default'], $config['formas_pago'], true)) {
+                $config['metodo_pago_default'] = $config['formas_pago'][0];
+            }
+            foreach (['recibo', 'cocina', 'barra'] as $station) {
+                $ipKey = 'impresora_' . $station . '_ip';
+                $portKey = 'impresora_' . $station . '_puerto';
+                if (!is_string($config[$ipKey])) {
+                    $config[$ipKey] = '';
+                }
+                $port = filter_var($config[$portKey], FILTER_VALIDATE_INT);
+                $config[$portKey] = $port !== false && $port >= 1 && $port <= 65535 ? $port : 9100;
+            }
+            if (!is_array($config['impresora_categorias_barra'])) {
+                $config['impresora_categorias_barra'] = [];
+            } else {
+                $config['impresora_categorias_barra'] = array_values(array_filter(
+                    $config['impresora_categorias_barra'],
+                    static fn($category) => is_string($category) && trim($category) !== ''
+                ));
+            }
+            return $config;
         }
     }
     return $default;
 }
 
+function validatePrinterIPv4($ip)
+{
+    if (!is_string($ip) || filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
+        return false;
+    }
+
+    $octets = array_map('intval', explode('.', $ip));
+    return $octets[0] === 10
+        || ($octets[0] === 172 && $octets[1] >= 16 && $octets[1] <= 31)
+        || ($octets[0] === 192 && $octets[1] === 168);
+}
+
 function saveAppConfig($config)
 {
-    file_put_contents('config.json', json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+    $path = __DIR__ . '/config.json';
+    $temporaryPath = $path . '.tmp';
+    $json = json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    if ($json === false || file_put_contents($temporaryPath, $json, LOCK_EX) === false) {
+        throw new RuntimeException('No se pudo guardar la configuración. Verifique los permisos de escritura.');
+    }
+
+    if (!rename($temporaryPath, $path)) {
+        unlink($temporaryPath);
+        throw new RuntimeException('No se pudo aplicar la configuración guardada.');
+    }
+}
+
+function getTotalVentaCobrado($venta)
+{
+    $montoPagado = max(0, (float) ($venta['monto_pagado'] ?? 0));
+    if (($venta['tipo_pago'] ?? null) !== 'Efectivo') {
+        return $montoPagado;
+    }
+
+    $orden = json_decode($venta['orden'] ?? '', true);
+    if (!is_array($orden) || $orden === []) {
+        return $montoPagado;
+    }
+
+    $subtotal = 0;
+    foreach ($orden as $item) {
+        if (!is_array($item) || !is_numeric($item['precio'] ?? null)) {
+            return $montoPagado;
+        }
+        $subtotal += max(0, (float) $item['precio']) * max(1, (int) ($item['cantidad'] ?? 1));
+    }
+
+    return round(max(
+        0,
+        $subtotal - max(0, (float) ($venta['descuento'] ?? 0)) + max(0, (float) ($venta['impuesto'] ?? 0))
+    ), 2);
+}
+
+function getDefaultPermissions($role)
+{
+    $permissions = [
+        'pos' => false,
+        'menu_ver' => false,
+        'menu_editar' => false,
+        'clientes_ver' => false,
+        'clientes_editar' => false,
+        'inventario_ver' => false,
+        'inventario_editar' => false,
+        'empleados' => false,
+        'informes' => false,
+        'mermas' => false,
+        'promociones' => false,
+        'config' => false,
+        'cocina' => false,
+        'cierre_caja' => false,
+        'propinas' => false,
+        'ventas_suspendidas_ver' => false,
+        'eliminar_suspendidas' => false,
+    ];
+
+    if ($role === 'gerente') {
+        return array_fill_keys(array_keys($permissions), true);
+    }
+
+    if ($role === 'mesero') {
+        $permissions['pos'] = true;
+        $permissions['menu_ver'] = true;
+        $permissions['clientes_ver'] = true;
+        $permissions['ventas_suspendidas_ver'] = true;
+    } elseif ($role === 'cocinero') {
+        $permissions['menu_ver'] = true;
+        $permissions['cocina'] = true;
+        $permissions['mermas'] = true;
+    }
+
+    return $permissions;
+}
+
+function getPermissionDefinitions()
+{
+    return [
+        'Ventas' => [
+            'pos' => 'Acceder al punto de venta y cobrar',
+            'ventas_suspendidas_ver' => 'Consultar y editar ventas suspendidas',
+            'cierre_caja' => 'Consultar y registrar cierres de caja',
+            'propinas' => 'Consultar y actualizar propinas',
+        ],
+        'Catálogo e inventario' => [
+            'menu_ver' => 'Consultar el menú',
+            'menu_editar' => 'Crear, modificar y eliminar productos del menú',
+            'inventario_ver' => 'Consultar existencias',
+            'inventario_editar' => 'Registrar y modificar existencias',
+            'mermas' => 'Registrar y consultar mermas',
+        ],
+        'Administración' => [
+            'clientes_ver' => 'Consultar clientes',
+            'clientes_editar' => 'Crear, modificar y eliminar clientes',
+            'informes' => 'Consultar informes y reportes',
+            'promociones' => 'Administrar promociones',
+            'cocina' => 'Acceder a la pantalla de cocina',
+            'empleados' => 'Administrar empleados y sus permisos',
+            'config' => 'Cambiar la configuración general del POS',
+            'eliminar_suspendidas' => 'Eliminar todas las ventas suspendidas',
+        ],
+    ];
 }
 
 // Funciones para empleados
@@ -141,63 +239,8 @@ function addEmpleado($nombre, $usuario, $password, $rol)
 {
     global $pdo;
     $hashed = password_hash($password, PASSWORD_DEFAULT);
-
-    // Permisos por defecto según rol
-    $permisos_default = [];
-    switch ($rol) {
-        case 'gerente':
-            $permisos_default = [
-                'pos' => true,
-                'menu_ver' => true,
-                'menu_editar' => true,
-                'empleados' => true,
-                'informes' => true,
-                'mermas' => true,
-                'promociones' => true,
-                'config' => true,
-                'cocina' => true,
-                'eliminar_suspendidas' => true
-            ];
-            break;
-        case 'cocinero':
-            $permisos_default = [
-                'pos' => false,
-                'menu_ver' => true,
-                'menu_editar' => false,
-                'empleados' => false,
-                'informes' => false,
-                'mermas' => true,
-                'promociones' => false,
-                'config' => false,
-                'cocina' => true,
-                'eliminar_suspendidas' => false
-            ];
-            break;
-        case 'mesero':
-            $permisos_default = [
-                'pos' => true,
-                'menu_ver' => true,
-                'menu_editar' => false,
-                'empleados' => false,
-                'informes' => false,
-                'mermas' => false,
-                'promociones' => false,
-                'config' => false,
-                'cocina' => false,
-                'eliminar_suspendidas' => false
-            ];
-            break;
-    }
-
-    // Configuraciones por defecto
-    $config_default = [
-        'idioma' => 'es',
-        'tema' => 'claro',
-        'notificaciones' => true,
-        'horario' => '08:00-18:00',
-        'salario' => 0.00
-    ];
-
+    $permisos_default = getDefaultPermissions($rol);
+    $config_default = [];
     $permisos_json = json_encode($permisos_default);
     $config_json = json_encode($config_default);
 
@@ -208,10 +251,18 @@ function addEmpleado($nombre, $usuario, $password, $rol)
 function getPermisos($user_id)
 {
     global $pdo;
-    $stmt = $pdo->prepare("SELECT permisos FROM empleados WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT permisos, rol FROM empleados WHERE id = ?");
     $stmt->execute([$user_id]);
     $result = $stmt->fetch(PDO::FETCH_ASSOC);
-    return $result ? json_decode($result['permisos'], true) : [];
+    if (!$result) {
+        return [];
+    }
+
+    $savedPermissions = json_decode($result['permisos'] ?? '', true);
+    return array_merge(
+        getDefaultPermissions($result['rol']),
+        is_array($savedPermissions) ? array_intersect_key($savedPermissions, getDefaultPermissions($result['rol'])) : []
+    );
 }
 
 function setPermisos($user_id, $permisos)
@@ -249,6 +300,11 @@ function verificarLogin($usuario, $password)
         $stmt->execute([$usuario]);
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
         if ($user && password_verify($password, $user['password'])) {
+            $savedPermissions = json_decode($user['permisos'] ?? '', true);
+            $user['permisos'] = array_merge(
+                getDefaultPermissions($user['rol']),
+                is_array($savedPermissions) ? array_intersect_key($savedPermissions, getDefaultPermissions($user['rol'])) : []
+            );
             return $user;
         }
         return false;
@@ -438,14 +494,15 @@ function updateVentaOrden($id, $orden)
     $stmt->execute([$orden_json, $id]);
 }
 
-function completarVenta($id, $tipo_pago, $propina = 0, $monto_pagado = 0, $descuento = 0)
+function completarVenta($id, $tipo_pago, $propina = 0, $monto_pagado = 0, $descuento = 0, $impuesto = 0)
 {
     global $pdo;
     $propina = max(0, floatval($propina));
     $monto_pagado = max(0, floatval($monto_pagado));
     $descuento = max(0, floatval($descuento));
-    $stmt = $pdo->prepare("UPDATE ventas SET suspendida = 0, tipo_pago = ?, propina = ?, monto_pagado = ?, descuento = ? WHERE id = ?");
-    $stmt->execute([$tipo_pago, $propina, $monto_pagado, $descuento, $id]);
+    $impuesto = max(0, floatval($impuesto));
+    $stmt = $pdo->prepare("UPDATE ventas SET suspendida = 0, tipo_pago = ?, propina = ?, monto_pagado = ?, descuento = ?, impuesto = ? WHERE id = ?");
+    $stmt->execute([$tipo_pago, $propina, $monto_pagado, $descuento, $impuesto, $id]);
 }
 
 function updateVentaPropina($id, $propina)
@@ -568,11 +625,3 @@ function logAction($action, $user_id)
         return false;
     }
 }
-
-// Crear tabla logs si no existe
-$pdo->exec("CREATE TABLE IF NOT EXISTS logs (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    action TEXT,
-    user_id INT,
-    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)");

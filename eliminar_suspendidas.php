@@ -3,7 +3,7 @@ include 'data.php';
 include 'security.php';
 
 requireMethod('POST');
-requireRole('gerente');
+requirePermission('eliminar_suspendidas');
 
 try {
     if (!isset($_POST['csrf_token']) || !validateCsrfToken($_POST['csrf_token'])) {

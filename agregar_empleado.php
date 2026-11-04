@@ -2,12 +2,11 @@
 include 'data.php';
 include 'security.php';
 
-requireRole('gerente');
 requireMethod('POST');
+requirePermission('empleados');
 
 try {
-    // Validar CSRF obligatorio
-    if (!isset($_POST['csrf_token']) || !validateCsrfToken($_POST['csrf_token'])) {
+    if (!is_string($_POST['csrf_token'] ?? null) || !validateCsrfToken($_POST['csrf_token'])) {
         throw new Exception('Token de seguridad inválido');
     }
 
@@ -24,6 +23,15 @@ try {
     }
     if (!in_array($rol, ['mesero', 'cocinero', 'gerente'])) {
         throw new Exception('Rol inválido');
+    }
+    $roleQuery = $pdo->prepare('SELECT rol FROM empleados WHERE id = ?');
+    $roleQuery->execute([$_SESSION['user']['id']]);
+    $currentRole = $roleQuery->fetchColumn();
+    if ($currentRole === false) {
+        throw new Exception('No se pudo verificar el rol de la sesión');
+    }
+    if ($rol === 'gerente' && $currentRole !== 'gerente') {
+        throw new Exception('Solo un gerente puede crear otra cuenta de gerente');
     }
 
     // Validar contraseña

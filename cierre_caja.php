@@ -9,51 +9,68 @@ if (!isset($_SESSION['user'])) {
     exit;
 }
 
-if (!($_SESSION['user']['permisos']['pos'] ?? false)) {
-    header('Location: dashboard.php');
-    exit;
-}
+requirePermission('cierre_caja');
 
 $user = $_SESSION['user'];
 $cierre_actual = null;
 $ventas_hoy = [];
 
 // Obtener cierre actual si existe
-if ($_POST['accion'] ?? null === 'crear_cierre') {
-    if (!isset($_POST['csrf_token']) || !validateCsrfToken($_POST['csrf_token'])) {
+if (($_POST['accion'] ?? null) === 'crear_cierre') {
+    if (!is_string($_POST['csrf_token'] ?? null) || !validateCsrfToken($_POST['csrf_token'])) {
         die('Token CSRF inválido.');
     }
     $fecha_inicio = date('Y-m-d 00:00:00');
     $fecha_fin = date('Y-m-d 23:59:59');
 
-    $stmt = $GLOBALS['pdo']->prepare("
-        SELECT 
-            COUNT(*) as total_ventas,
-            SUM(CASE WHEN tipo_pago = 'Efectivo' THEN 1 ELSE 0 END) as ventas_efectivo,
-            SUM(CASE WHEN tipo_pago = 'Tarjeta' THEN 1 ELSE 0 END) as ventas_tarjeta,
-            SUM(CASE WHEN tipo_pago = 'Transferencia' THEN 1 ELSE 0 END) as ventas_transferencia,
-            SUM(CASE WHEN NOT suspendida THEN (SELECT COALESCE(SUM(JSON_EXTRACT(orden, CONCAT('$[', idx, '].precio'))), 0) FROM ventas v2 WHERE v2.id = ventas.id FOR EACH JSON ELEMENT idx) ELSE 0 END) as total_ventas_valor,
-            SUM(descuento) as total_descuentos,
-            SUM(impuesto) as total_impuestos,
-            SUM(propina) as total_propinas
-        FROM ventas 
-        WHERE NOT suspendida AND fecha BETWEEN ? AND ?
-    ");
-
-    $stmt->execute([$fecha_inicio, $fecha_fin]);
-    $cierre_actual = $stmt->fetch(PDO::FETCH_ASSOC);
+    $fecha_siguiente = date('Y-m-d', strtotime('+1 day'));
+    $stmt = $GLOBALS['pdo']->prepare(
+        'SELECT * FROM ventas
+         WHERE COALESCE(suspendida, 0) = 0 AND fecha >= ? AND fecha < ?'
+    );
+    $stmt->execute([$fecha_inicio, $fecha_siguiente . ' 00:00:00']);
+    $ventasParaCierre = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $cierre_actual = [
+        'total_ventas' => count($ventasParaCierre),
+        'ventas_efectivo' => 0,
+        'ventas_tarjeta' => 0,
+        'ventas_transferencia' => 0,
+        'ventas_otros' => 0,
+        'total_ventas_valor' => 0,
+        'total_descuentos' => 0,
+        'total_impuestos' => 0,
+        'total_propinas' => 0,
+    ];
+    foreach ($ventasParaCierre as $venta) {
+        $totalCobrado = getTotalVentaCobrado($venta);
+        $cierre_actual['total_ventas_valor'] += $totalCobrado;
+        $cierre_actual['total_descuentos'] += (float) $venta['descuento'];
+        $cierre_actual['total_impuestos'] += (float) $venta['impuesto'];
+        $cierre_actual['total_propinas'] += (float) $venta['propina'];
+        if ($venta['tipo_pago'] === 'Efectivo') {
+            $cierre_actual['ventas_efectivo'] += $totalCobrado;
+        } elseif ($venta['tipo_pago'] === 'Tarjeta') {
+            $cierre_actual['ventas_tarjeta'] += $totalCobrado;
+        } elseif ($venta['tipo_pago'] === 'Transferencia') {
+            $cierre_actual['ventas_transferencia'] += $totalCobrado;
+        } else {
+            $cierre_actual['ventas_otros'] += $totalCobrado;
+        }
+    }
 
     // Guardar cierre
     $stmt_save = $GLOBALS['pdo']->prepare("
-        INSERT INTO cierres_caja (usuario_id, fecha, total_ventas, total_efectivo, total_tarjeta, total_descuentos, total_impuestos, total_propinas)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO cierres_caja (usuario_id, fecha, total_ventas, total_efectivo, total_tarjeta, total_transferencia, total_otros, total_descuentos, total_impuestos, total_propinas)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
     $stmt_save->execute([
         $user['id'],
         date('Y-m-d'),
         $cierre_actual['total_ventas_valor'] ?? 0,
-        $cierre_actual['total_ventas_valor'] ?? 0, // Efectivo
-        0, // Tarjeta
+        $cierre_actual['ventas_efectivo'] ?? 0,
+        $cierre_actual['ventas_tarjeta'] ?? 0,
+        $cierre_actual['ventas_transferencia'] ?? 0,
+        $cierre_actual['ventas_otros'] ?? 0,
         $cierre_actual['total_descuentos'] ?? 0,
         $cierre_actual['total_impuestos'] ?? 0,
         $cierre_actual['total_propinas'] ?? 0
@@ -62,40 +79,47 @@ if ($_POST['accion'] ?? null === 'crear_cierre') {
 
 // Obtener ventas del día para cierre
 $fecha_inicio = date('Y-m-d 00:00:00');
-$fecha_fin = date('Y-m-d 23:59:59');
+$fecha_siguiente = date('Y-m-d', strtotime('+1 day'));
 
 $stmt = $GLOBALS['pdo']->prepare("
     SELECT v.*, e.nombre as mesero_nombre 
     FROM ventas v 
     LEFT JOIN empleados e ON v.mesero_id = e.id
-    WHERE NOT v.suspendida AND v.fecha BETWEEN ? AND ?
+    WHERE COALESCE(v.suspendida, 0) = 0 AND v.fecha >= ? AND v.fecha < ?
     ORDER BY v.fecha DESC
 ");
-$stmt->execute([$fecha_inicio, $fecha_fin]);
+$stmt->execute([$fecha_inicio, $fecha_siguiente . ' 00:00:00']);
 $ventas_hoy = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Calcular totales
 $total_efectivo = 0;
 $total_tarjeta = 0;
 $total_transferencia = 0;
+$total_otros = 0;
+$totales_por_metodo = [];
 $total_descuentos = 0;
 $total_impuestos = 0;
 $total_propinas = 0;
 
 foreach ($ventas_hoy as $venta) {
+    $totalCobrado = getTotalVentaCobrado($venta);
     if ($venta['tipo_pago'] === 'Efectivo') {
-        $total_efectivo += $venta['monto_pagado'];
+        $total_efectivo += $totalCobrado;
     } elseif ($venta['tipo_pago'] === 'Tarjeta') {
-        $total_tarjeta += $venta['monto_pagado'];
+        $total_tarjeta += $totalCobrado;
+    } elseif ($venta['tipo_pago'] === 'Transferencia') {
+        $total_transferencia += $totalCobrado;
     } else {
-        $total_transferencia += $venta['monto_pagado'];
+        $total_otros += $totalCobrado;
     }
+    $metodo = $venta['tipo_pago'] ?: 'Sin método';
+    $totales_por_metodo[$metodo] = ($totales_por_metodo[$metodo] ?? 0) + $totalCobrado;
     $total_descuentos += $venta['descuento'];
     $total_impuestos += $venta['impuesto'];
     $total_propinas += $venta['propina'];
 }
 
-$total_general = $total_efectivo + $total_tarjeta + $total_transferencia;
+$total_general = $total_efectivo + $total_tarjeta + $total_transferencia + $total_otros;
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -207,10 +231,21 @@ $total_general = $total_efectivo + $total_tarjeta + $total_transferencia;
             margin-top: 30px;
         }
 
+        .ventas-tabla-scroll {
+            overflow-x: auto;
+        }
+
         .ventas-tabla {
             width: 100%;
+            min-width: 760px;
             border-collapse: collapse;
             font-size: 12px;
+        }
+
+        .ventas-vacia {
+            padding: 24px !important;
+            color: #64748b;
+            text-align: center !important;
         }
 
         .ventas-tabla th {
@@ -251,6 +286,12 @@ $total_general = $total_efectivo + $total_tarjeta + $total_transferencia;
                 <h4>Transferencia</h4>
                 <div class="valor">$<?php echo number_format($total_transferencia, 2); ?></div>
             </div>
+            <?php if ($total_otros > 0): ?>
+                <div class="resumen-item">
+                    <h4>Otros métodos</h4>
+                    <div class="valor">$<?php echo number_format($total_otros, 2); ?></div>
+                </div>
+            <?php endif; ?>
             <div class="resumen-item" style="border-left-color: #e74c3c;">
                 <h4>Total General</h4>
                 <div class="valor">$<?php echo number_format($total_general, 2); ?></div>
@@ -270,24 +311,18 @@ $total_general = $total_efectivo + $total_tarjeta + $total_transferencia;
             <div class="resumen-item" style="border-left-color: #16a085;">
                 <h4>Total Ventas</h4>
                 <div class="valor">
-                    $<?php echo number_format($total_general + $total_impuestos - $total_descuentos, 2); ?></div>
+                    $<?php echo number_format($total_general, 2); ?></div>
             </div>
         </div>
 
         <div class="metodos-pago">
             <h3>Desglose por Método de Pago</h3>
-            <div class="metodo-pago-row">
-                <span>Ventas en Efectivo:</span>
-                <strong>$<?php echo number_format($total_efectivo, 2); ?></strong>
-            </div>
-            <div class="metodo-pago-row">
-                <span>Ventas con Tarjeta:</span>
-                <strong>$<?php echo number_format($total_tarjeta, 2); ?></strong>
-            </div>
-            <div class="metodo-pago-row">
-                <span>Ventas por Transferencia:</span>
-                <strong>$<?php echo number_format($total_transferencia, 2); ?></strong>
-            </div>
+            <?php foreach ($totales_por_metodo as $metodo => $monto): ?>
+                <div class="metodo-pago-row">
+                    <span>Ventas con <?= htmlspecialchars($metodo) ?>:</span>
+                    <strong>$<?php echo number_format($monto, 2); ?></strong>
+                </div>
+            <?php endforeach; ?>
             <div class="metodo-pago-row" style="border-top: 2px solid #2c3e50; padding-top: 10px; margin-top: 10px;">
                 <strong>Total Ingresos:</strong>
                 <strong
@@ -310,7 +345,8 @@ $total_general = $total_efectivo + $total_tarjeta + $total_transferencia;
 
         <div class="ventas-detalle">
             <h3>Detalle de Ventas del Día</h3>
-            <table class="ventas-tabla">
+            <div class="ventas-tabla-scroll">
+              <table class="ventas-tabla">
                 <thead>
                     <tr>
                         <th>ID Venta</th>
@@ -326,22 +362,40 @@ $total_general = $total_efectivo + $total_tarjeta + $total_transferencia;
                     </tr>
                 </thead>
                 <tbody>
-                    <?php foreach ($ventas_hoy as $venta): ?>
+                    <?php if ($ventas_hoy === []): ?>
+                        <tr>
+                            <td class="ventas-vacia" colspan="10">No hay ventas completadas registradas hoy.</td>
+                        </tr>
+                    <?php else: ?>
+                      <?php foreach ($ventas_hoy as $venta): ?>
+                        <?php
+                        $ordenVenta = json_decode($venta['orden'] ?? '', true);
+                        $subtotalVenta = is_array($ordenVenta)
+                            ? array_sum(array_map(
+                                static fn($item) => is_array($item)
+                                    ? max(0, (float) ($item['precio'] ?? 0)) * max(1, (int) ($item['cantidad'] ?? 1))
+                                    : 0,
+                                $ordenVenta
+                            ))
+                            : 0;
+                        ?>
                         <tr>
                             <td>#<?php echo $venta['id']; ?></td>
-                            <td><?php echo $venta['mesa']; ?></td>
+                            <td><?php echo (int) $venta['mesa'] === 0 ? 'Mostrador' : htmlspecialchars((string) $venta['mesa']); ?></td>
                             <td><?php echo htmlspecialchars($venta['mesero_nombre'] ?? 'N/A'); ?></td>
-                            <td><?php echo htmlspecialchars($venta['tipo_pago']); ?></td>
-                            <td>$<?php echo number_format($venta['monto_pagado'] - $venta['propina'], 2); ?></td>
+                            <td><?php echo htmlspecialchars($venta['tipo_pago'] ?? 'Sin método'); ?></td>
+                            <td>$<?php echo number_format($subtotalVenta, 2); ?></td>
                             <td>-$<?php echo number_format($venta['descuento'], 2); ?></td>
                             <td>+$<?php echo number_format($venta['impuesto'], 2); ?></td>
                             <td>$<?php echo number_format($venta['propina'], 2); ?></td>
-                            <td>$<?php echo number_format($venta['monto_pagado'], 2); ?></td>
+                            <td>$<?php echo number_format(getTotalVentaCobrado($venta), 2); ?></td>
                             <td><?php echo date('H:i:s', strtotime($venta['fecha'])); ?></td>
                         </tr>
-                    <?php endforeach; ?>
+                      <?php endforeach; ?>
+                    <?php endif; ?>
                 </tbody>
-            </table>
+              </table>
+            </div>
         </div>
     </div>
 

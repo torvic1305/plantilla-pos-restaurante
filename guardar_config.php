@@ -2,7 +2,7 @@
 include 'data.php';
 include 'security.php';
 requireMethod('POST');
-requireRole('gerente');
+requirePermission('config');
 
 if (!isset($_POST['csrf_token']) || !validateCsrfToken($_POST['csrf_token'])) {
     header('Location: pos.php?error=csrf');

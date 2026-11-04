@@ -4,10 +4,11 @@ ini_set('display_errors', 1);
 
 include 'data.php';
 include 'security.php';
-if (!isset($_SESSION['user']) || !($_SESSION['user']['permisos']['informes'] ?? false)) {
+if (!isset($_SESSION['user'])) {
     header('Location: dashboard.php');
     exit;
 }
+requirePermission('informes');
 
 $user = $_SESSION['user'];
 

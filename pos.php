@@ -10,10 +10,47 @@ $user = $_SESSION['user'];
 $config = getAppConfig();
 $mesas = range(1, max(1, intval($config['mesas'] ?? 20)));
 $formas_pago = is_array($config['formas_pago']) ? $config['formas_pago'] : ['Efectivo', 'Tarjeta', 'Transferencia'];
+$metodo_pago_default = in_array($config['metodo_pago_default'] ?? '', $formas_pago, true)
+    ? $config['metodo_pago_default']
+    : $formas_pago[0];
+$requiere_mesa = !empty($config['pos_require_table']);
 $impuesto = floatval($config['impuesto'] ?? 0);
 $meseros = getMeseros();
 $menu = getMenu();
 $promociones_activas = getPromocionesActivas();
+$promociones_pos = array_map(static function ($promo) {
+    return [
+        'nombre' => (string) ($promo['nombre'] ?? ''),
+        'descuento' => max(0, min(100, (float) ($promo['descuento'] ?? 0)))
+    ];
+}, $promociones_activas);
+$config_recibos = [
+    'nombre' => (string) ($config['nombre_restaurante'] ?? 'Restaurante POS'),
+    'titulo' => (string) ($config['recibo_titulo'] ?? 'Restaurante POS'),
+    'pie' => (string) ($config['recibo_pie'] ?? 'Gracias por su compra'),
+    'mostrarFecha' => !empty($config['recibo_mostrar_fecha']),
+    'mostrarPrecios' => !empty($config['recibo_mostrar_precios']),
+    'mostrarDescuentos' => !empty($config['recibo_mostrar_descuentos']),
+    'mostrarImpuestos' => !empty($config['recibo_mostrar_impuestos']),
+];
+$config_impresoras = [
+    'recibo' => [
+        'ip' => (string) ($config['impresora_recibo_ip'] ?? ''),
+        'puerto' => (int) ($config['impresora_recibo_puerto'] ?? 9100),
+    ],
+    'cocina' => [
+        'ip' => (string) ($config['impresora_cocina_ip'] ?? ''),
+        'puerto' => (int) ($config['impresora_cocina_puerto'] ?? 9100),
+    ],
+    'barra' => [
+        'ip' => (string) ($config['impresora_barra_ip'] ?? ''),
+        'puerto' => (int) ($config['impresora_barra_puerto'] ?? 9100),
+    ],
+    'categoriasBarra' => is_array($config['impresora_categorias_barra'] ?? null)
+        ? $config['impresora_categorias_barra']
+        : [],
+];
+$puedeConfigurar = !empty($user['permisos']['config']);
 $categorias_menu = [];
 foreach ($menu as $item) {
     $categoria = trim($item['categoria'] ?: 'General');
@@ -41,9 +78,10 @@ foreach ($menu as $item) {
         <div class="pos-container">
             <div class="mesas">
                 <h3>Mesas</h3>
+                <?php if ($puedeConfigurar): ?>
                 <div class="mesas-config">
                     <label>Mesas configuradas: <input id="mesas-count" type="number" min="1"
-                            value="<?php echo count($mesas); ?>"></label>
+                        value="<?php echo count($mesas); ?>"></label>
                     <button id="guardar-mesas">Guardar mesas</button>
                 </div>
                 <h4>Asignar mesa</h4>
@@ -56,6 +94,9 @@ foreach ($menu as $item) {
                     <?php foreach ($mesas as $m) {
                         echo "<button class='mesa-btn' data-mesa='$m'>Mesa $m</button>";
                     } ?>
+                    <?php if (!$requiere_mesa): ?>
+                        <button class="mesa-btn mesa-mostrad-btn" data-mesa="0">Mostrador</button>
+                    <?php endif; ?>
                 </div>
                 <p>Mesero asignado: <span
                         id="current-mesero-text"><?php echo htmlspecialchars($meseros[0]['nombre'] ?? ''); ?></span></p>
@@ -97,7 +138,7 @@ foreach ($menu as $item) {
                     <label>Forma de pago:
                         <select id="tipo-pago">
                             <?php foreach ($formas_pago as $forma) {
-                                echo "<option value='" . htmlspecialchars($forma) . "'>" . htmlspecialchars($forma) . "</option>";
+                                echo "<option value='" . htmlspecialchars($forma) . "'" . ($forma === $metodo_pago_default ? ' selected' : '') . ">" . htmlspecialchars($forma) . "</option>";
                             } ?>
                         </select>
                     </label>
@@ -108,7 +149,7 @@ foreach ($menu as $item) {
                 <div class="venta-acciones">
                     <button id="imprimir-pre-recibo">Imprimir Pre-Recibo</button>
                     <button id="cobrar">Cobrar</button>
-                    <button id="suspender">Suspender Venta</button>
+                    <button id="suspender" <?= empty($user['permisos']['ventas_suspendidas_ver']) ? 'hidden' : '' ?>>Suspender Venta</button>
                     <button id="limpiar-orden">Limpiar Orden</button>
                 </div>
                 <div id="promo-banner" class="promo-banner"
@@ -148,7 +189,7 @@ foreach ($menu as $item) {
                 <button id="imprimir-cocina">Imprimir Cocina</button>
                 <button id="imprimir-barra">Imprimir Barra</button>
             </div>
-            <div class="suspendidas">
+            <div class="suspendidas" <?= empty($user['permisos']['ventas_suspendidas_ver']) ? 'hidden' : '' ?>>
                 <h3>Ventas Suspendidas</h3>
                 <div class="suspendidas-search">
                     <input type="text" id="search-suspendidas" placeholder="Buscar ID, mesa, mesero">
@@ -174,7 +215,7 @@ foreach ($menu as $item) {
                         <label>Forma de pago:
                             <select id="suspendida-tipo-pago">
                                 <?php foreach ($formas_pago as $forma) {
-                                    echo "<option value='" . htmlspecialchars($forma) . "'>" . htmlspecialchars($forma) . "</option>";
+                                    echo "<option value='" . htmlspecialchars($forma) . "'" . ($forma === $metodo_pago_default ? ' selected' : '') . ">" . htmlspecialchars($forma) . "</option>";
                                 } ?>
                             </select>
                         </label>
@@ -184,6 +225,7 @@ foreach ($menu as $item) {
                         <label>Propina: $<input type="number" id="suspendida-propina" min="0" step="0.01"
                                 value="0"></label>
                     </div>
+                    <?php endif; ?>
                     <div class="venta-acciones">
                         <button id="imprimir-pre-recibo-suspendida">Imprimir Pre-Recibo</button>
                         <button id="imprimir-cocina-suspendida">Imprimir Cocina</button>
@@ -240,6 +282,15 @@ foreach ($menu as $item) {
         let impuesto = parseFloat('<?php echo $impuesto; ?>') || 0;
         let itemEditandoIndex = -1;
         const csrfToken = '<?= htmlspecialchars(getCsrfToken(), ENT_QUOTES | ENT_HTML5, 'UTF-8') ?>';
+        const promocionesActivas = <?php echo json_encode($promociones_pos, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT); ?>;
+        const configuracionPOS = <?php echo json_encode([
+            'requiereMesa' => $requiere_mesa,
+            'confirmarVenta' => !empty($config['pos_confirmar_venta']),
+            'enfocarBusqueda' => !empty($config['pos_focus_search']),
+            'ventasSuspendidas' => !empty($user['permisos']['ventas_suspendidas_ver']),
+            'recibos' => $config_recibos,
+            'impresoras' => $config_impresoras,
+        ], JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT); ?>;
 
         const currentMeseroText = document.getElementById('current-mesero-text');
         const currentMesaText = document.getElementById('current-mesa-text');
@@ -275,19 +326,22 @@ foreach ($menu as $item) {
             return order.reduce((sum, item) => sum + (parseFloat(item.precio) || 0), 0);
         }
 
+        function obtenerDescuentoPromocion(subtotal) {
+            const promocion = promocionesActivas.reduce((mejor, actual) =>
+                actual.descuento > mejor.descuento ? actual : mejor,
+                { nombre: '', descuento: 0 }
+            );
+            return {
+                nombre: promocion.nombre,
+                monto: subtotal * (promocion.descuento / 100)
+            };
+        }
+
         function calcularTotalFinal(order = orden) {
             const subtotal = calcularTotal(order);
-            let descuento = 0;
-            <?php if (!empty($promociones_activas)): ?>
-                <?php foreach ($promociones_activas as $promo): ?>
-                    if (subtotal >= <?php echo $promo['min_compra']; ?>) {
-                        descuento = subtotal * (<?php echo $promo['descuento_porcentaje']; ?> / 100);
-                        break;
-                    }
-                <?php endforeach; ?>
-            <?php endif; ?>
-            const descuentoManual = parseFloat(document.getElementById('descuento-manual').value) || 0;
-            const totalConDescuentos = subtotal - descuento - descuentoManual;
+            const descuentoPromo = obtenerDescuentoPromocion(subtotal).monto;
+            const descuentoManual = Math.max(0, parseFloat(document.getElementById('descuento-manual').value) || 0);
+            const totalConDescuentos = Math.max(0, subtotal - descuentoPromo - descuentoManual);
             const impuestoCalculado = totalConDescuentos * (impuesto / 100);
             return totalConDescuentos + impuestoCalculado;
         }
@@ -312,7 +366,7 @@ foreach ($menu as $item) {
                 estadoMain.textContent = 'No hay productos en la orden. Agregue artículos para comenzar.';
                 return;
             }
-            if (!mesaSeleccionada) {
+            if (!mesaSeleccionada && configuracionPOS.requiereMesa) {
                 estadoMain.textContent = 'Seleccione una mesa antes de continuar.';
                 return;
             }
@@ -365,30 +419,20 @@ foreach ($menu as $item) {
             });
 
             const subtotal = calcularTotal();
-            let descuento = 0;
-            let promocionActiva = null;
+            const promocion = obtenerDescuentoPromocion(subtotal);
+            const descuento = promocion.monto;
+            const promocionActiva = promocion.monto > 0 ? promocion.nombre : '';
 
-            // Check for active promotions (simplified - in real implementation, check against server data)
-            <?php if (!empty($promociones_activas)): ?>
-                <?php foreach ($promociones_activas as $promo): ?>
-                    if (subtotal >= <?php echo $promo['min_compra']; ?>) {
-                        descuento = subtotal * (<?php echo $promo['descuento_porcentaje']; ?> / 100);
-                        promocionActiva = "<?php echo htmlspecialchars($promo['descripcion']); ?>";
-                        break;
-                    }
-                <?php endforeach; ?>
-            <?php endif; ?>
-
-            const totalFinal = subtotal - descuento;
-            const descuentoManual = parseFloat(document.getElementById('descuento-manual').value) || 0;
-            const totalConDescuentos = totalFinal - descuentoManual;
+            const descuentoManual = Math.max(0, parseFloat(document.getElementById('descuento-manual').value) || 0);
+            const descuentoTotal = Math.min(subtotal, descuento + descuentoManual);
+            const totalConDescuentos = Math.max(0, subtotal - descuentoTotal);
             const impuestoCalculado = totalConDescuentos * (impuesto / 100);
             const totalConImpuesto = totalConDescuentos + impuestoCalculado;
 
             subtotalVenta = subtotal;
 
             subtotalAmount.textContent = subtotal.toFixed(2);
-            discountAmount.textContent = (descuento + descuentoManual).toFixed(2);
+            discountAmount.textContent = descuentoTotal.toFixed(2);
             taxAmount.textContent = impuestoCalculado.toFixed(2);
             totalAmount.textContent = totalConImpuesto.toFixed(2);
             itemCount.textContent = orden.length;
@@ -407,9 +451,6 @@ foreach ($menu as $item) {
                 promoBanner.style.display = 'none';
             }
 
-            if (tipoPagoSelect.value !== 'Efectivo') {
-                montoPagadoInput.value = totalFinal.toFixed(2);
-            }
             actualizarCambio();
             actualizarEstadoMain();
         }
@@ -440,19 +481,9 @@ foreach ($menu as $item) {
 
             const ordenCompleta = suspendidaOriginalOrder.concat(suspendidaAddedItems);
             const subtotal = calcularTotal(ordenCompleta);
-            let descuento = 0;
+            const descuento = obtenerDescuentoPromocion(subtotal).monto;
 
-            // Check for active promotions
-            <?php if (!empty($promociones_activas)): ?>
-                <?php foreach ($promociones_activas as $promo): ?>
-                    if (subtotal >= <?php echo $promo['min_compra']; ?>) {
-                        descuento = subtotal * (<?php echo $promo['descuento_porcentaje']; ?> / 100);
-                        break;
-                    }
-                <?php endforeach; ?>
-            <?php endif; ?>
-
-            const totalFinal = subtotal - descuento;
+            const totalFinal = Math.max(0, subtotal - descuento);
             const totalConImpuesto = totalFinal + (totalFinal * (impuesto / 100));
 
             document.getElementById('suspendida-subtotal').textContent = subtotal.toFixed(2);
@@ -526,6 +557,22 @@ foreach ($menu as $item) {
             suspendidaItemCount.textContent = '0';
         }
 
+        function obtenerContextoImpresion() {
+            if (editingSuspendidaId) {
+                const mesaTexto = selectedVentaMesa.textContent.trim();
+                return {
+                    mesa: mesaTexto === 'Mostrador' ? '0' : mesaTexto,
+                    mesero: selectedVentaMesero.textContent.trim()
+                };
+            }
+
+            const meseroSelect = document.getElementById('mesero-select');
+            return {
+                mesa: mesaSeleccionada,
+                mesero: meseroSelect.options[meseroSelect.selectedIndex]?.text || ''
+            };
+        }
+
         actualizarMeseroInfo();
 
         document.getElementById('mesero-select').addEventListener('change', function () {
@@ -536,7 +583,10 @@ foreach ($menu as $item) {
         document.querySelectorAll('.mesa-btn').forEach(btn => {
             btn.addEventListener('click', function () {
                 mesaSeleccionada = this.dataset.mesa;
-                currentMesaText.textContent = 'Mesa ' + mesaSeleccionada;
+                currentMesaText.textContent = mesaSeleccionada === '0' ? 'Mostrador' : 'Mesa ' + mesaSeleccionada;
+                document.querySelectorAll('.mesa-btn').forEach(mesa => mesa.classList.remove('selected'));
+                this.classList.add('selected');
+                actualizarEstadoMain();
             });
         });
 
@@ -545,7 +595,8 @@ foreach ($menu as $item) {
                 const item = {
                     id: this.dataset.id,
                     nombre: this.dataset.nombre,
-                    precio: parseFloat(this.dataset.precio)
+                    precio: parseFloat(this.dataset.precio),
+                    categoria: this.dataset.categoria || ''
                 };
                 if (editingSuspendidaId) {
                     suspendidaAddedItems.push(item);
@@ -612,18 +663,9 @@ foreach ($menu as $item) {
         document.getElementById('suspendida-tipo-pago').addEventListener('change', function () {
             const ordenCompleta = suspendidaOriginalOrder.concat(suspendidaAddedItems);
             const subtotal = calcularTotal(ordenCompleta);
-            let descuento = 0;
+            const descuento = obtenerDescuentoPromocion(subtotal).monto;
 
-            <?php if (!empty($promociones_activas)): ?>
-                <?php foreach ($promociones_activas as $promo): ?>
-                    if (subtotal >= <?php echo $promo['min_compra']; ?>) {
-                        descuento = subtotal * (<?php echo $promo['descuento_porcentaje']; ?> / 100);
-                        break;
-                    }
-                <?php endforeach; ?>
-            <?php endif; ?>
-
-            const totalFinal = subtotal - descuento;
+            const totalFinal = Math.max(0, subtotal - descuento);
             const totalConImpuesto = totalFinal + (totalFinal * (impuesto / 100));
 
             if (this.value !== 'Efectivo') {
@@ -646,7 +688,11 @@ foreach ($menu as $item) {
         });
 
         document.getElementById('suspender').addEventListener('click', function () {
-            if (!mesaSeleccionada) {
+            if (!mesaSeleccionada && !configuracionPOS.requiereMesa) {
+                mesaSeleccionada = '0';
+                currentMesaText.textContent = 'Mostrador';
+            }
+            if (mesaSeleccionada === null) {
                 alert('Seleccione una mesa antes de suspender la venta.');
                 return;
             }
@@ -658,13 +704,15 @@ foreach ($menu as $item) {
                 alert('Agregue productos antes de suspender la venta.');
                 return;
             }
+            const ordenParaImprimir = orden.map(item => ({ ...item }));
+            const contextoImpresion = obtenerContextoImpresion();
             const subtotal = calcularTotal();
             const descuento = subtotal - calcularTotalFinal();
             const total = calcularTotalFinal();
             fetch('guardar_venta.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-                body: JSON.stringify({ orden, mesa: mesaSeleccionada, mesero: meseroSeleccionado, suspendida: true, csrf_token: csrfToken })
+                body: JSON.stringify({ orden: ordenParaImprimir, mesa: mesaSeleccionada, mesero: meseroSeleccionado, suspendida: true, csrf_token: csrfToken })
             })
                 .then(response => response.json())
                 .then(data => {
@@ -673,9 +721,9 @@ foreach ($menu as $item) {
                         resetVentaFinalizadaPanel();
                         estadoMain.textContent = 'Venta suspendida. Puede iniciar una nueva orden.';
                         alert('Venta suspendida correctamente.');
-                        imprimirPreRecibo(orden, subtotal, descuento, total);
-                        imprimirComandaCocina(orden);
-                        imprimirComandaBarra(orden);
+                        imprimirPreRecibo(ordenParaImprimir, subtotal, descuento, total, contextoImpresion);
+                        imprimirComandaCocina(ordenParaImprimir, contextoImpresion);
+                        imprimirComandaBarra(ordenParaImprimir, contextoImpresion);
                         buscarSuspendidas();
                     } else {
                         alert(data.message || 'Error al suspender la venta');
@@ -684,7 +732,11 @@ foreach ($menu as $item) {
         });
 
         document.getElementById('cobrar').addEventListener('click', function () {
-            if (!mesaSeleccionada) {
+            if (!mesaSeleccionada && !configuracionPOS.requiereMesa) {
+                mesaSeleccionada = '0';
+                currentMesaText.textContent = 'Mostrador';
+            }
+            if (mesaSeleccionada === null) {
                 alert('Seleccione una mesa antes de completar la venta.');
                 return;
             }
@@ -703,7 +755,7 @@ foreach ($menu as $item) {
             const tipoPago = tipoPagoSelect.value;
             const montoPagado = parseFloat(montoPagadoInput.value) || 0;
 
-            let details = `<p><strong>Mesa:</strong> ${mesaSeleccionada}</p>`;
+            let details = `<p><strong>Mesa:</strong> ${mesaSeleccionada === '0' ? 'Mostrador' : mesaSeleccionada}</p>`;
             details += `<p><strong>Mesero:</strong> ${document.getElementById('mesero-select').options[document.getElementById('mesero-select').selectedIndex].text}</p>`;
             details += `<p><strong>Items:</strong></p><ul>`;
             orden.forEach(item => {
@@ -720,19 +772,26 @@ foreach ($menu as $item) {
             }
 
             document.getElementById('confirm-details').innerHTML = details;
-            document.getElementById('confirm-modal').style.display = 'flex';
+            if (configuracionPOS.confirmarVenta) {
+                document.getElementById('confirm-modal').style.display = 'flex';
+            } else {
+                document.getElementById('confirm-cobrar').click();
+            }
         });
 
         document.getElementById('confirm-cobrar').addEventListener('click', function () {
             // Proceder con el cobro
             const tipoPago = tipoPagoSelect.value;
             const subtotal = calcularTotal();
-            const descuentoPromo = subtotal - calcularTotalFinal();
-            const descuentoManual = parseFloat(document.getElementById('descuento-manual').value) || 0;
-            const descuentoTotal = descuentoPromo + descuentoManual;
-            const impuestoCalculado = (subtotal - descuentoTotal) * (impuesto / 100);
-            const total = subtotal - descuentoTotal + impuestoCalculado;
+            const promocion = obtenerDescuentoPromocion(subtotal);
+            const descuentoManual = Math.max(0, parseFloat(document.getElementById('descuento-manual').value) || 0);
+            const descuentoTotal = Math.min(subtotal, promocion.monto + descuentoManual);
+            const subtotalConDescuento = Math.max(0, subtotal - descuentoTotal);
+            const impuestoCalculado = subtotalConDescuento * (impuesto / 100);
+            const total = subtotalConDescuento + impuestoCalculado;
             const montoPagado = parseFloat(montoPagadoInput.value) || 0;
+            const ordenParaImprimir = orden.map(item => ({ ...item }));
+            const contextoImpresion = obtenerContextoImpresion();
             const esEfectivo = tipoPago === 'Efectivo';
             if (esEfectivo && montoPagado < total) {
                 alert('El monto pagado debe ser mayor o igual al total para efectivo.');
@@ -744,7 +803,7 @@ foreach ($menu as $item) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
                 body: JSON.stringify({
-                    orden,
+                    orden: ordenParaImprimir,
                     mesa: mesaSeleccionada,
                     mesero: meseroSeleccionado,
                     suspendida: false,
@@ -767,7 +826,7 @@ foreach ($menu as $item) {
                         estadoMain.textContent = 'Venta completada. Ingrese propina o cierre el panel.';
                         alert('Venta cobrada correctamente. Cambio: $' + cambio.toFixed(2));
                         // Imprimir recibo final
-                        imprimirRecibo(data.id, orden, subtotal, descuentoTotal, total, tipoPago, montoPagado, cambio);
+                        imprimirRecibo(data.id, ordenParaImprimir, subtotal, descuentoTotal, total, tipoPago, montoPagado, cambio, contextoImpresion);
                     } else {
                         alert(data.message || 'Error al completar la venta');
                     }
@@ -851,6 +910,7 @@ foreach ($menu as $item) {
         document.getElementById('buscar-suspendidas').addEventListener('click', buscarSuspendidas);
 
         function buscarSuspendidas() {
+            if (!configuracionPOS.ventasSuspendidas) return;
             const search = document.getElementById('search-suspendidas').value;
             fetch('buscar_suspendidas.php?search=' + encodeURIComponent(search))
                 .then(response => response.json())
@@ -868,7 +928,8 @@ foreach ($menu as $item) {
                     data.ventas.forEach(venta => {
                         const div = document.createElement('div');
                         div.className = 'suspendida-item';
-                        div.innerHTML = `<strong>ID ${venta.id}</strong> - Mesa ${venta.mesa} - Mesero ${venta.mesero_nombre || 'N/A'} - Items: ${venta.orden.length}`;
+                        const ubicacion = Number(venta.mesa) === 0 ? 'Mostrador' : `Mesa ${venta.mesa}`;
+                        div.innerHTML = `<strong>ID ${venta.id}</strong> - ${ubicacion} - Mesero ${venta.mesero_nombre || 'N/A'} - Items: ${venta.orden.length}`;
                         const editar = document.createElement('button');
                         editar.type = 'button';
                         editar.textContent = 'Abrir';
@@ -887,7 +948,7 @@ foreach ($menu as $item) {
             suspendidaAddedItems = [];
             selectedVentaId.textContent = venta.id;
             selectedVentaMesero.textContent = venta.mesero_nombre || 'N/A';
-            selectedVentaMesa.textContent = venta.mesa;
+            selectedVentaMesa.textContent = Number(venta.mesa) === 0 ? 'Mostrador' : venta.mesa;
             suspendidaSelectedSection.style.display = 'block';
             actualizarSuspendidaOrden();
         }
@@ -898,6 +959,7 @@ foreach ($menu as $item) {
                 return;
             }
             const nuevos = suspendidaAddedItems.slice();
+            const contextoImpresion = obtenerContextoImpresion();
             fetch('editar_suspendida.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
@@ -907,8 +969,8 @@ foreach ($menu as $item) {
                 .then(data => {
                     if (data.status === 'ok') {
                         if (nuevos.length) {
-                            imprimirComandaCocina(nuevos);
-                            imprimirComandaBarra(nuevos);
+                            imprimirComandaCocina(nuevos, contextoImpresion);
+                            imprimirComandaBarra(nuevos, contextoImpresion);
                         }
                         suspendidaOriginalOrder = [];
                         suspendidaAddedItems = [];
@@ -935,9 +997,13 @@ foreach ($menu as $item) {
             const propina = parseFloat(document.getElementById('suspendida-propina').value) || 0;
             const montoPagado = parseFloat(document.getElementById('suspendida-monto-pagado').value) || 0;
             const ordenCompleta = suspendidaOriginalOrder.concat(suspendidaAddedItems);
+            const contextoImpresion = obtenerContextoImpresion();
             const subtotal = calcularTotal(ordenCompleta);
-            const total = calcularTotalFinal(ordenCompleta);
-            const descuento = subtotal - total;
+            const promocion = obtenerDescuentoPromocion(subtotal);
+            const descuento = Math.min(subtotal, promocion.monto);
+            const subtotalConDescuento = Math.max(0, subtotal - descuento);
+            const impuestoCalculado = subtotalConDescuento * (impuesto / 100);
+            const total = subtotalConDescuento + impuestoCalculado;
             if (!tipoPago) {
                 alert('Seleccione una forma de pago para completar la venta.');
                 return;
@@ -958,6 +1024,18 @@ foreach ($menu as $item) {
                         resetOrdenActual();
                         resetVentaFinalizadaPanel();
                         estadoMain.textContent = 'Venta suspendida completada correctamente. Inicie una nueva orden.';
+                        imprimirRecibo(
+                            data.venta_id,
+                            ordenCompleta,
+                            subtotal,
+                            descuento,
+                            total,
+                            tipoPago,
+                            montoPagado,
+                            tipoPago === 'Efectivo' ? Math.max(0, montoPagado - total) : 0,
+                            contextoImpresion,
+                            false
+                        );
                         alert('Venta suspendida completada correctamente.');
                         buscarSuspendidas();
                     } else {
@@ -996,15 +1074,25 @@ foreach ($menu as $item) {
             imprimirComandaBarra(ordenCompleta);
         });
 
-        document.getElementById('guardar-mesas').addEventListener('click', function () {
-            const mesas = document.getElementById('mesas-count').value;
-            const form = document.createElement('form');
-            form.method = 'POST';
-            form.action = 'guardar_config.php';
-            form.innerHTML = `<input name="mesas" value="${mesas}">`;
-            document.body.appendChild(form);
-            form.submit();
-        });
+        const guardarMesasButton = document.getElementById('guardar-mesas');
+        if (guardarMesasButton) {
+            guardarMesasButton.addEventListener('click', function () {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = 'guardar_config.php';
+                const csrf = document.createElement('input');
+                csrf.type = 'hidden';
+                csrf.name = 'csrf_token';
+                csrf.value = csrfToken;
+                const mesas = document.createElement('input');
+                mesas.type = 'hidden';
+                mesas.name = 'mesas';
+                mesas.value = document.getElementById('mesas-count').value;
+                form.append(csrf, mesas);
+                document.body.appendChild(form);
+                form.submit();
+            });
+        }
 
         buscarSuspendidas();
 
@@ -1040,76 +1128,170 @@ foreach ($menu as $item) {
             win.print();
         }
 
-        function generarItemsHtml(orden) {
-            return orden.map(item => `<div>${item.nombre} - $${parseFloat(item.precio).toFixed(2)}</div>`).join('');
+        function escaparHtmlImpresion(valor) {
+            return String(valor).replace(/[&<>"']/g, caracter => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            })[caracter]);
         }
 
-        function imprimirPreRecibo(orden, subtotal, descuento, total) {
+        function generarItemsHtml(orden) {
+            return orden.map(item => {
+                const nombre = escaparHtmlImpresion(item.nombre);
+                const precio = configuracionPOS.recibos.mostrarPrecios ? ' - $' + parseFloat(item.precio).toFixed(2) : '';
+                const nota = item.nota ? `<small>Nota: ${escaparHtmlImpresion(item.nota)}</small>` : '';
+                return `<div>${parseInt(item.cantidad || 1, 10)} x ${nombre}${precio}${nota}</div>`;
+            }).join('');
+        }
+
+        function enviarTrabajoImpresion(estacion, orden, contexto, datos, impresionLocal) {
+            const impresora = configuracionPOS.impresoras[estacion];
+            if (!impresora || !impresora.ip) {
+                impresionLocal();
+                return;
+            }
+
+            fetch('imprimir_comanda.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                body: JSON.stringify({
+                    estacion,
+                    orden,
+                    mesa: contexto.mesa,
+                    mesero: contexto.mesero,
+                    csrf_token: csrfToken,
+                    ...datos
+                })
+            })
+                .then(async response => {
+                    const result = await response.json();
+                    if (!response.ok || result.status !== 'ok') {
+                        throw new Error(result.message || 'No se pudo enviar el trabajo de impresión.');
+                    }
+                    return result;
+                })
+                .then(result => {
+                    if (!result.message.includes('no contiene productos')) {
+                        console.info(result.message);
+                    }
+                })
+                .catch(error => {
+                    alert(error.message || 'Error de conexión con la impresora.');
+                });
+        }
+
+        function imprimirPreRecibo(orden, subtotal, descuento, total, contexto = obtenerContextoImpresion()) {
+            const opciones = configuracionPOS.recibos;
+            const impuestoCalculado = Math.max(0, subtotal - descuento) * (impuesto / 100);
             const contenido = `
-                <div class="center"><strong>PRE-RECIBO</strong></div>
+                <div class="center"><strong>${opciones.titulo} · PRE-RECIBO</strong></div>
                 <div class="separator"></div>
-                <div>Fecha: ${new Date().toLocaleString()}</div>
-                <div>Mesa: ${mesaSeleccionada}</div>
-                <div>Mesero: ${document.getElementById('mesero-select').options[document.getElementById('mesero-select').selectedIndex].text}</div>
+                ${opciones.mostrarFecha ? `<div>Fecha: ${new Date().toLocaleString()}</div>` : ''}
+                <div>Mesa: ${contexto.mesa === '0' ? 'Mostrador' : escaparHtmlImpresion(contexto.mesa)}</div>
+                <div>Mesero: ${escaparHtmlImpresion(contexto.mesero)}</div>
                 <div class="separator"></div>
                 <div class="items">${generarItemsHtml(orden)}</div>
                 <div class="separator"></div>
                 <div>Subtotal: $${subtotal.toFixed(2)}</div>
-                ${descuento > 0 ? `<div>Descuento: $${descuento.toFixed(2)}</div>` : ''}
+                ${opciones.mostrarDescuentos && descuento > 0 ? `<div>Descuento: $${descuento.toFixed(2)}</div>` : ''}
+                ${opciones.mostrarImpuestos && impuestoCalculado > 0 ? `<div>Impuesto: $${impuestoCalculado.toFixed(2)}</div>` : ''}
                 <div><strong>Total: $${total.toFixed(2)}</strong></div>
+                <div class="footer center small">${opciones.pie}</div>
             `;
-            crearVentanaImpresion('Pre-Recibo', contenido);
+            enviarTrabajoImpresion('recibo', orden, contexto, {
+                pre_recibo: true,
+                descuento,
+                impuesto: impuestoCalculado
+            }, () => crearVentanaImpresion(opciones.titulo + ' - Pre-Recibo', contenido));
         }
 
-        function imprimirRecibo(id, orden, subtotal, descuento, total, tipoPago, montoPagado, cambio) {
+        function imprimirRecibo(id, orden, subtotal, descuento, total, tipoPago, montoPagado, cambio, contexto = obtenerContextoImpresion(), imprimirComandas = true) {
+            const opciones = configuracionPOS.recibos;
+            const impuestoCalculado = Math.max(0, subtotal - descuento) * (impuesto / 100);
             const contenido = `
+                <div class="center"><strong>${opciones.titulo}</strong></div>
                 <div class="center"><strong>RECIBO</strong></div>
                 <div class="separator"></div>
                 <div>ID Venta: ${id}</div>
-                <div>Fecha: ${new Date().toLocaleString()}</div>
-                <div>Mesa: ${mesaSeleccionada}</div>
-                <div>Mesero: ${document.getElementById('mesero-select').options[document.getElementById('mesero-select').selectedIndex].text}</div>
+                ${opciones.mostrarFecha ? `<div>Fecha: ${new Date().toLocaleString()}</div>` : ''}
+                <div>Mesa: ${contexto.mesa === '0' ? 'Mostrador' : escaparHtmlImpresion(contexto.mesa)}</div>
+                <div>Mesero: ${escaparHtmlImpresion(contexto.mesero)}</div>
                 <div class="separator"></div>
                 <div class="items">${generarItemsHtml(orden)}</div>
                 <div class="separator"></div>
                 <div>Subtotal: $${subtotal.toFixed(2)}</div>
-                ${descuento > 0 ? `<div>Descuento: $${descuento.toFixed(2)}</div>` : ''}
+                ${opciones.mostrarDescuentos && descuento > 0 ? `<div>Descuento: $${descuento.toFixed(2)}</div>` : ''}
+                ${opciones.mostrarImpuestos && impuestoCalculado > 0 ? `<div>Impuesto: $${impuestoCalculado.toFixed(2)}</div>` : ''}
                 <div><strong>Total: $${total.toFixed(2)}</strong></div>
                 <div>Forma de Pago: ${tipoPago}</div>
                 ${tipoPago === 'Efectivo' ? `<div>Monto Pagado: $${montoPagado.toFixed(2)}</div><div>Cambio: $${cambio.toFixed(2)}</div>` : ''}
-                <div class="footer center small">Gracias por su compra</div>
+                <div class="footer center small">${opciones.pie}</div>
             `;
-            crearVentanaImpresion('Recibo', contenido);
-            imprimirComandaCocina(orden);
-            imprimirComandaBarra(orden);
+            enviarTrabajoImpresion('recibo', orden, contexto, {
+                venta_id: id,
+                descuento,
+                impuesto: impuestoCalculado,
+                tipo_pago: tipoPago,
+                monto_pagado: montoPagado
+            }, () => crearVentanaImpresion(opciones.titulo + ' - Recibo', contenido));
+            if (imprimirComandas) {
+                imprimirComandaCocina(orden, contexto);
+                imprimirComandaBarra(orden, contexto);
+            }
         }
 
-        function imprimirComandaCocina(orden) {
-            const comida = orden.filter(item => !item.nombre.toLowerCase().includes('bebida') && !item.nombre.toLowerCase().includes('cerveza') && !item.nombre.toLowerCase().includes('vino'));
+        function esProductoDeBarra(item) {
+            const categoriasConfiguradas = configuracionPOS.impresoras.categoriasBarra
+                .map(categoria => String(categoria).trim().toLocaleLowerCase())
+                .filter(Boolean);
+            const categoria = String(item.categoria || '').trim().toLocaleLowerCase();
+            if (categoriasConfiguradas.length) {
+                return categoriasConfiguradas.includes(categoria);
+            }
+            return /bebida|cerveza|vino/i.test(`${item.categoria || ''} ${item.nombre || ''}`);
+        }
+
+        function imprimirComandaCocina(orden, contexto = obtenerContextoImpresion()) {
+            const opciones = configuracionPOS.recibos;
+            const comida = orden.filter(item => !esProductoDeBarra(item));
             if (comida.length === 0) return;
             const contenido = `
+                <div class="center"><strong>${opciones.titulo}</strong></div>
                 <div class="center"><strong>COMANDA COCINA</strong></div>
                 <div class="separator"></div>
-                <div>Mesa: ${mesaSeleccionada}</div>
-                <div>Hora: ${new Date().toLocaleTimeString()}</div>
+                <div>Mesa: ${contexto.mesa === '0' ? 'Mostrador' : escaparHtmlImpresion(contexto.mesa)}</div>
+                <div>Mesero: ${escaparHtmlImpresion(contexto.mesero)}</div>
+                ${opciones.mostrarFecha ? `<div>Hora: ${new Date().toLocaleTimeString()}</div>` : ''}
                 <div class="separator"></div>
                 <div class="items">${generarItemsHtml(comida)}</div>
+                <div class="footer center small">${opciones.pie}</div>
             `;
-            crearVentanaImpresion('Comanda Cocina', contenido);
+            enviarTrabajoImpresion('cocina', orden, contexto, {}, () => crearVentanaImpresion(opciones.titulo + ' - Comanda Cocina', contenido));
         }
 
-        function imprimirComandaBarra(orden) {
-            const bebidas = orden.filter(item => item.nombre.toLowerCase().includes('bebida') || item.nombre.toLowerCase().includes('cerveza') || item.nombre.toLowerCase().includes('vino'));
+        function imprimirComandaBarra(orden, contexto = obtenerContextoImpresion()) {
+            const opciones = configuracionPOS.recibos;
+            const bebidas = orden.filter(esProductoDeBarra);
             if (bebidas.length === 0) return;
             const contenido = `
+                <div class="center"><strong>${opciones.titulo}</strong></div>
                 <div class="center"><strong>COMANDA BARRA</strong></div>
                 <div class="separator"></div>
-                <div>Mesa: ${mesaSeleccionada}</div>
-                <div>Hora: ${new Date().toLocaleTimeString()}</div>
+                <div>Mesa: ${contexto.mesa === '0' ? 'Mostrador' : escaparHtmlImpresion(contexto.mesa)}</div>
+                <div>Mesero: ${escaparHtmlImpresion(contexto.mesero)}</div>
+                ${opciones.mostrarFecha ? `<div>Hora: ${new Date().toLocaleTimeString()}</div>` : ''}
                 <div class="separator"></div>
                 <div class="items">${generarItemsHtml(bebidas)}</div>
+                <div class="footer center small">${opciones.pie}</div>
             `;
-            crearVentanaImpresion('Comanda Barra', contenido);
+            enviarTrabajoImpresion('barra', orden, contexto, {}, () => crearVentanaImpresion(opciones.titulo + ' - Comanda Barra', contenido));
+        }
+
+        if (configuracionPOS.enfocarBusqueda) {
+            document.getElementById('menu-search').focus();
         }
     </script>
 </body>

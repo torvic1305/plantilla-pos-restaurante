@@ -6,12 +6,13 @@ if (!isset($_SESSION['user'])) {
     exit;
 }
 
-requirePermission('menu_editar');
+requirePermission('clientes_ver');
 
 $message = '';
 $editCliente = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    requirePermission('clientes_editar');
     try {
         if (!isset($_POST['csrf_token']) || !validateCsrfToken($_POST['csrf_token'])) {
             throw new Exception('Token de seguridad inválido');
@@ -86,6 +87,7 @@ $clientes = getClientes();
             </div>
         <?php endif; ?>
 
+        <?php if (!empty($_SESSION['user']['permisos']['clientes_editar'])): ?>
         <section
             style="margin-bottom: 30px; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
             <h2><?php echo $editCliente ? 'Editar cliente' : 'Agregar nuevo cliente'; ?></h2>
@@ -117,6 +119,7 @@ $clientes = getClientes();
                 <?php endif; ?>
             </form>
         </section>
+        <?php endif; ?>
 
         <section>
             <h2>Lista de clientes</h2>
@@ -130,7 +133,9 @@ $clientes = getClientes();
                             <th style="padding: 10px; text-align:left;">Teléfono</th>
                             <th style="padding: 10px; text-align:left;">Email</th>
                             <th style="padding: 10px; text-align:left;">Dirección</th>
-                            <th style="padding: 10px; text-align:center;">Acciones</th>
+                            <?php if (!empty($_SESSION['user']['permisos']['clientes_editar'])): ?>
+                                <th style="padding: 10px; text-align:center;">Acciones</th>
+                            <?php endif; ?>
                         </tr>
                     </thead>
                     <tbody>
@@ -140,6 +145,7 @@ $clientes = getClientes();
                                 <td style="padding: 10px;"><?php echo htmlspecialchars($cliente['telefono']); ?></td>
                                 <td style="padding: 10px;"><?php echo htmlspecialchars($cliente['email']); ?></td>
                                 <td style="padding: 10px;"><?php echo nl2br(htmlspecialchars($cliente['direccion'])); ?></td>
+                                <?php if (!empty($_SESSION['user']['permisos']['clientes_editar'])): ?>
                                 <td style="padding: 10px; text-align:center;">
                                     <a href="clientes.php?edit=<?php echo intval($cliente['id']); ?>"
                                         style="margin-right: 8px;">Editar</a>
@@ -152,6 +158,7 @@ $clientes = getClientes();
                                             style="background: transparent; border: none; color: #c00; cursor: pointer;">Eliminar</button>
                                     </form>
                                 </td>
+                                <?php endif; ?>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>

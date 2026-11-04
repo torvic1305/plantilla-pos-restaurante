@@ -5,6 +5,8 @@ if (!isset($_SESSION['user'])) {
     header('Location: index.php');
     exit;
 }
+requirePermission('menu_ver');
+$canEditMenu = !empty($_SESSION['user']['permisos']['menu_editar']);
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -40,13 +42,14 @@ if (!isset($_SESSION['user'])) {
             foreach ($items as $item) {
                 echo "<div class='menu-item'>
                         <span>" . htmlspecialchars($item['nombre'], ENT_QUOTES | ENT_HTML5, 'UTF-8') . " - $" . htmlspecialchars(number_format($item['precio'], 2), ENT_QUOTES | ENT_HTML5, 'UTF-8') . "</span>
-                        <button type='button' onclick='editarItem(" . intval($item['id']) . ")'>Editar</button>
-                        <button type='button' onclick='eliminarItem(" . intval($item['id']) . ")'>Eliminar</button>
+                        " . ($canEditMenu ? "<button type='button' onclick='editarItem(" . intval($item['id']) . ")'>Editar</button>
+                        <button type='button' onclick='eliminarItem(" . intval($item['id']) . ")'>Eliminar</button>" : '') . "
                       </div>";
             }
             echo "</div>";
         }
         ?>
+        <?php if ($canEditMenu): ?>
         <h2>Agregar Item</h2>
         <form action="agregar_menu.php" method="post">
             <input type="hidden" name="csrf_token"
@@ -59,6 +62,7 @@ if (!isset($_SESSION['user'])) {
             </select>
             <button type="submit">Agregar</button>
         </form>
+        <?php endif; ?>
     </main>
     <script src="2.js"></script>
     <script>

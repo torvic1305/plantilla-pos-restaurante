@@ -1,12 +1,25 @@
 <?php
 // Setup de base de datos MySQL
-$host = 'localhost';
-$db = 'restaurante_pos';
-$user = 'root';
-$pass = '';
+$host = getenv('DB_HOST') ?: 'localhost';
+$db = getenv('DB_NAME') ?: 'restaurante_pos';
+$user = getenv('DB_USER') ?: 'root';
+$pass = getenv('DB_PASS') ?: '';
 
 $message = '';
 $error = false;
+
+function ensureColumn(PDO $pdo, string $table, string $column, string $definition): void
+{
+    $stmt = $pdo->prepare(
+        'SELECT COUNT(*) FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+    );
+    $stmt->execute([$table, $column]);
+
+    if ((int) $stmt->fetchColumn() === 0) {
+        $pdo->exec("ALTER TABLE `$table` ADD COLUMN `$column` $definition");
+    }
+}
 
 try {
     $pdo = new PDO("mysql:host=$host", $user, $pass);
@@ -23,13 +36,13 @@ try {
         usuario VARCHAR(255) UNIQUE NOT NULL,
         password VARCHAR(255) NOT NULL,
         rol ENUM('mesero', 'cocinero', 'gerente') NOT NULL,
-        permisos JSON DEFAULT ('{}'),
-        configuraciones JSON DEFAULT ('{}')
+        permisos JSON NULL,
+        configuraciones JSON NULL
     )");
 
     // Agregar columnas si no existen (para actualizaciones)
-    $pdo->exec("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS permisos JSON DEFAULT ('{}')");
-    $pdo->exec("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS configuraciones JSON DEFAULT ('{}')");
+    ensureColumn($pdo, 'empleados', 'permisos', 'JSON NULL');
+    ensureColumn($pdo, 'empleados', 'configuraciones', 'JSON NULL');
 
     // Tabla menu
     $pdo->exec("CREATE TABLE IF NOT EXISTS menu (
@@ -51,11 +64,11 @@ try {
         fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (mesero_id) REFERENCES empleados(id)
     )");
-    $pdo->exec("ALTER TABLE ventas ADD COLUMN IF NOT EXISTS tipo_pago VARCHAR(100) NULL");
-    $pdo->exec("ALTER TABLE ventas ADD COLUMN IF NOT EXISTS propina DECIMAL(10,2) DEFAULT 0");
-    $pdo->exec("ALTER TABLE ventas ADD COLUMN IF NOT EXISTS monto_pagado DECIMAL(10,2) DEFAULT 0");
-    $pdo->exec("ALTER TABLE ventas ADD COLUMN IF NOT EXISTS descuento DECIMAL(10,2) DEFAULT 0");
-    $pdo->exec("ALTER TABLE ventas ADD COLUMN IF NOT EXISTS impuesto DECIMAL(10,2) DEFAULT 0");
+    ensureColumn($pdo, 'ventas', 'tipo_pago', 'VARCHAR(100) NULL');
+    ensureColumn($pdo, 'ventas', 'propina', 'DECIMAL(10,2) DEFAULT 0');
+    ensureColumn($pdo, 'ventas', 'monto_pagado', 'DECIMAL(10,2) DEFAULT 0');
+    ensureColumn($pdo, 'ventas', 'descuento', 'DECIMAL(10,2) DEFAULT 0');
+    ensureColumn($pdo, 'ventas', 'impuesto', 'DECIMAL(10,2) DEFAULT 0');
 
     // Tabla cierres de caja
     $pdo->exec("CREATE TABLE IF NOT EXISTS cierres_caja (
@@ -66,12 +79,14 @@ try {
         total_efectivo DECIMAL(10,2) DEFAULT 0,
         total_tarjeta DECIMAL(10,2) DEFAULT 0,
         total_transferencia DECIMAL(10,2) DEFAULT 0,
+        total_otros DECIMAL(10,2) DEFAULT 0,
         total_descuentos DECIMAL(10,2) DEFAULT 0,
         total_impuestos DECIMAL(10,2) DEFAULT 0,
         total_propinas DECIMAL(10,2) DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (usuario_id) REFERENCES empleados(id)
     )");
+    ensureColumn($pdo, 'cierres_caja', 'total_otros', 'DECIMAL(10,2) DEFAULT 0');
 
     // Tabla auditoría
     $pdo->exec("CREATE TABLE IF NOT EXISTS audit_log (
@@ -123,6 +138,14 @@ try {
         descuento DECIMAL(5,2),
         desde DATETIME,
         hasta DATETIME
+    )");
+
+    // Tabla de logs de operaciones
+    $pdo->exec("CREATE TABLE IF NOT EXISTS logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        action TEXT,
+        user_id INT,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )");
 
     // Insertar datos iniciales

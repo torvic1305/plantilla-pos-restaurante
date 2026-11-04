@@ -19,14 +19,9 @@ echo "<h2>Diagnóstico del Sistema</h2>";
 
 // 1. Verificar MySQL
 echo "<h3>1. Estado de MySQL:</h3>";
-try {
-    $pdo = new PDO("mysql:host=localhost", "root", "");
+if ($pdo instanceof PDO) {
     echo "✓ Conexión a MySQL correcta<br>";
-
-    // 2. Crear/usar base de datos
-    $pdo->exec("CREATE DATABASE IF NOT EXISTS restaurante_pos");
-    $pdo->exec("USE restaurante_pos");
-    echo "✓ Base de datos 'restaurante_pos' creada/accesible<br>";
+    echo "✓ Base de datos configurada y tabla de usuarios accesible<br>";
 
     // 3. Verificar tabla empleados
     $result = $pdo->query("SHOW TABLES LIKE 'empleados'");
@@ -55,10 +50,9 @@ try {
     } else {
         echo "✗ Tabla 'menu' NO existe<br>";
     }
-
-} catch (PDOException $e) {
-    echo "✗ Error: " . htmlspecialchars($e->getMessage()) . "<br>";
-    echo "Asegúrate de que MySQL esté corriendo.<br>";
+} else {
+    echo "✗ Error de conexión o esquema: " . htmlspecialchars($dbError ?? 'Base de datos no disponible') . "<br>";
+    echo "Verifica MySQL y las variables DB_HOST, DB_NAME, DB_USER y DB_PASS; después ejecuta <a href='setup.php'>setup.php</a>.<br>";
 }
 
 // 5. Verificar files

@@ -20,18 +20,23 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 try {
     $requestBody = file_get_contents('php://input');
     $data = json_decode($requestBody, true);
-    $csrf_token = trim($data['csrf_token'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
+    if (!is_array($data)) {
+        throw new Exception('Datos inválidos');
+    }
+    $csrfInput = $data['csrf_token'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
+    $csrf_token = is_string($csrfInput) ? trim($csrfInput) : '';
     if (!validateCsrfToken($csrf_token)) {
         throw new Exception('Token de seguridad inválido');
     }
-    if (!is_array($data) || empty($data['mesero']) || empty($data['mesa']) || !isset($data['orden'])) {
+    if (empty($data['mesero']) || !isset($data['mesa'], $data['orden'])) {
         throw new Exception('Datos inválidos');
     }
 
-    // Validar mesa
-    $mesa = intval($data['mesa']);
-    if ($mesa <= 0 || $mesa > 1000) {
-        throw new Exception('Número de mesa inválido');
+    $appConfig = getAppConfig();
+    $mesaRequerida = !empty($appConfig['pos_require_table']);
+    $mesa = validateInteger($data['mesa'], $mesaRequerida ? 1 : 0, 1000);
+    if ($mesa === null) {
+        throw new Exception($mesaRequerida ? 'Seleccione una mesa válida.' : 'Número de mesa inválido.');
     }
 
     // Validar orden
@@ -62,29 +67,39 @@ try {
     }
 
     $suspendida = !empty($data['suspendida']);
-    $tipo_pago = $suspendida ? null : trim($data['tipo_pago'] ?? '');
+    if ($suspendida) {
+        requirePermission('ventas_suspendidas_ver');
+    }
+    $paymentInput = $data['tipo_pago'] ?? '';
+    if (!$suspendida && !is_string($paymentInput)) {
+        throw new Exception('Debe seleccionar una forma de pago válida.');
+    }
+    $tipo_pago = $suspendida ? null : trim($paymentInput);
     if (!$suspendida && empty($tipo_pago)) {
         throw new Exception('Debe seleccionar un tipo de pago para completar la venta');
     }
-
-    $propina = max(0, floatval($data['propina'] ?? 0));
-    $monto_pagado = floatval($data['monto_pagado'] ?? 0);
-    $descuento = max(0, floatval($data['descuento'] ?? 0));
-    $impuesto = max(0, floatval($data['impuesto'] ?? 0));
-
-    // Validar descuento
-    if ($descuento > $total) {
-        throw new Exception('Descuento no puede ser mayor al total');
+    if (!$suspendida && !in_array($tipo_pago, $appConfig['formas_pago'], true)) {
+        throw new Exception('La forma de pago ya no está habilitada. Actualice el POS e inténtelo de nuevo.');
     }
 
-    // Validar monto pagado para efectivo
-    if (!$suspendida && $tipo_pago === 'Efectivo') {
-        if ($monto_pagado < $total) {
+    $propina = validateDecimal($data['propina'] ?? 0, 0, 10000);
+    $monto_pagado = validateDecimal($data['monto_pagado'] ?? 0, 0, 99999999);
+    $descuento = validateDecimal($data['descuento'] ?? 0, 0, $total);
+    if ($propina === null || $monto_pagado === null || $descuento === null) {
+        throw new Exception('El monto, descuento o propina no es válido');
+    }
+
+    $impuesto = 0;
+    if (!$suspendida) {
+        $baseImponible = max(0, $total - $descuento);
+        $impuesto = round($baseImponible * (float) ($appConfig['impuesto'] ?? 0) / 100, 2);
+        $totalVenta = $baseImponible + $impuesto;
+        if ($tipo_pago === 'Efectivo' && $monto_pagado < $totalVenta) {
             throw new Exception('El monto pagado debe ser mayor o igual al total para efectivo');
         }
-    }
-    if (!$suspendida && $tipo_pago !== 'Efectivo' && $monto_pagado <= 0) {
-        $monto_pagado = $total;
+        if ($tipo_pago !== 'Efectivo' && $monto_pagado <= 0) {
+            $monto_pagado = $totalVenta;
+        }
     }
 
     $saleId = addVenta($data['mesero'], $mesa, $orden, $suspendida, $tipo_pago, $propina, $monto_pagado, $descuento, $impuesto);

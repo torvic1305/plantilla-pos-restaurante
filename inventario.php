@@ -6,12 +6,14 @@ if (!isset($_SESSION['user'])) {
     exit;
 }
 
-requirePermission('menu_editar');
+requirePermission('inventario_ver');
+$canEditInventory = !empty($_SESSION['user']['permisos']['inventario_editar']);
 
 $message = '';
 $editItem = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    requirePermission('inventario_editar');
     try {
         if (!isset($_POST['csrf_token']) || !validateCsrfToken($_POST['csrf_token'])) {
             throw new Exception('Token de seguridad inválido');
@@ -88,6 +90,7 @@ $lowStockItems = getInventarioBajoStock();
         <?php endif; ?>
 
         <?php if (!empty($lowStockItems)): ?>
+            <?php if ($canEditInventory): ?>
             <section
                 style="margin-bottom: 20px; padding: 15px; background: #fff4e5; border: 1px solid #ffd8a8; border-radius: 8px;">
                 <h2>Artículos con stock bajo</h2>
@@ -98,6 +101,7 @@ $lowStockItems = getInventarioBajoStock();
                     <?php endforeach; ?>
                 </ul>
             </section>
+            <?php endif; ?>
         <?php endif; ?>
 
         <section
@@ -154,7 +158,9 @@ $lowStockItems = getInventarioBajoStock();
                             <th style="padding: 10px; text-align:right;">Máximo</th>
                             <th style="padding: 10px; text-align:right;">Costo</th>
                             <th style="padding: 10px; text-align:left;">Proveedor</th>
-                            <th style="padding: 10px; text-align:center;">Acciones</th>
+                            <?php if ($canEditInventory): ?>
+                                <th style="padding: 10px; text-align:center;">Acciones</th>
+                            <?php endif; ?>
                         </tr>
                     </thead>
                     <tbody>
@@ -170,6 +176,7 @@ $lowStockItems = getInventarioBajoStock();
                                     $<?php echo number_format($item['precio_costo'] ?? 0, 2); ?></td>
                                 <td style="padding: 10px; text-align:left;"><?php echo htmlspecialchars($item['proveedor']); ?>
                                 </td>
+                                <?php if ($canEditInventory): ?>
                                 <td style="padding: 10px; text-align:center;">
                                     <a href="inventario.php?edit=<?php echo intval($item['id']); ?>"
                                         style="margin-right: 8px;">Editar</a>
@@ -182,6 +189,7 @@ $lowStockItems = getInventarioBajoStock();
                                             style="background: transparent; border: none; color: #c00; cursor: pointer;">Eliminar</button>
                                     </form>
                                 </td>
+                                <?php endif; ?>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>

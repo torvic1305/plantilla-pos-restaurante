@@ -1,7 +1,7 @@
 <?php
 include 'data.php';
 include 'security.php';
-requirePermission('pos');
+requirePermission('ventas_suspendidas_ver');
 if (!isset($_SESSION['user'])) {
     http_response_code(401);
     echo json_encode(['status' => 'error', 'message' => 'No autorizado']);

@@ -3,7 +3,7 @@ include 'data.php';
 include 'security.php';
 
 requireMethod('POST');
-requirePermission('menu_editar');
+requirePermission('clientes_editar');
 
 try {
     // Validar CSRF obligatorio

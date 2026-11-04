@@ -6,10 +6,7 @@ if (!isset($_SESSION['user'])) {
     exit;
 }
 
-if (!($_SESSION['user']['permisos']['mermas'] ?? false)) {
-    header('Location: dashboard.php');
-    exit;
-}
+requirePermission('mermas');
 ?>
 <!DOCTYPE html>
 <html lang="es">

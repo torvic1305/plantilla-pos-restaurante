@@ -3,7 +3,7 @@ include 'data.php';
 include 'security.php';
 
 requireMethod('POST');
-requirePermission('pos');
+requirePermission('ventas_suspendidas_ver');
 if (!isset($_SESSION['user'])) {
     http_response_code(401);
     jsonResponse('error', 'No autorizado');

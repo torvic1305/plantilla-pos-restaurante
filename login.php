@@ -4,6 +4,12 @@ include 'security.php';
 
 // Solo procesar si es POST
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!($pdo instanceof PDO)) {
+        $_SESSION['login_error'] = 'No hay conexión con MySQL. Verifique DB_USER y DB_PASS en la configuración de Apache.';
+        header('Location: index.php?error=1');
+        exit;
+    }
+
     try {
         // Rate limiting
         if (!checkRateLimit('login_attempt', 5, 300)) {

@@ -4,6 +4,7 @@ include 'security.php';
 
 // Generar CSRF token
 $csrf_token = getCsrfToken();
+$loginRestaurantName = getAppConfig()['nombre_restaurante'] ?? 'Restaurante POS';
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -12,46 +13,69 @@ $csrf_token = getCsrfToken();
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Inicio de Sesión - Restaurante POS</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="style.php">
-
 </head>
 
-<body>
-    <?php if (!$pdo) {
-        $msg = isset($dbError) ? htmlspecialchars($dbError) : 'No se puede conectar a la base de datos.';
-        echo "<p style='color:red; text-align:center; margin-top:20px;'><strong>Error:</strong> $msg Asegúrate de que MySQL esté corriendo y ejecuta <a href='setup.php'>setup.php</a>.</p>";
-    } ?>
+<body class="login-screen">
+    <?php
+    $error_msg = '';
+    if (isset($_GET['error'])) {
+        if ($_GET['error'] == 1) {
+            $error_msg = $_SESSION['login_error'] ?? 'Usuario o contraseña incorrectos.';
+            unset($_SESSION['login_error']);
+        } elseif ($_GET['error'] == 2) {
+            $error_msg = 'Usuario y contraseña son requeridos.';
+        }
+    }
+
+    $dbMessage = '';
+    if (!($pdo instanceof PDO)) {
+        if (!empty($dbError) && strpos($dbError, '[1045]') !== false) {
+            $dbMessage = 'MySQL rechazó las credenciales. Configure DB_USER y DB_PASS en Apache y reinicie Apache.';
+        } elseif (!empty($dbError) && (strpos($dbError, '[1049]') !== false || strpos($dbError, '[42S02]') !== false)) {
+            $dbMessage = 'La base de datos o sus tablas todavía no están instaladas. Ejecute setup.php y vuelva a cargar esta página.';
+        } else {
+            $dbMessage = 'No se pudo conectar a MySQL. Verifique que MySQL esté iniciado y configure DB_HOST, DB_NAME, DB_USER y DB_PASS.';
+        }
+    }
+    ?>
     <div class="login-container">
-        <h2>Inicio de Sesión</h2>
-        <?php
-        $error_msg = '';
-        if (isset($_GET['error'])) {
-            $error = $_GET['error'];
-            if ($error == 1) {
-                $error_msg = $_SESSION['login_error'] ?? 'Usuario o contraseña incorrectos.';
-                unset($_SESSION['login_error']);
-            } elseif ($error == 2) {
-                $error_msg = 'Usuario y contraseña son requeridos.';
-            }
-        }
-        if (!empty($error_msg)) {
-            echo "<p style='color:red;'><strong>Error:</strong> " . htmlspecialchars($error_msg) . "</p>";
-        }
-        ?>
+        <div class="login-brand">
+            <span class="login-brand-icon" aria-hidden="true">♨</span>
+            <span class="login-brand-name"><?= htmlspecialchars($loginRestaurantName, ENT_QUOTES | ENT_HTML5, 'UTF-8') ?></span>
+        </div>
+        <div class="login-content">
+            <h1>Inicio de sesión</h1>
+            <p class="login-intro">Bienvenido al sistema. Para continuar, ingresa tu usuario y contraseña.</p>
+
+            <?php if ($dbMessage !== ''): ?>
+                <div class="login-alert" role="alert">
+                    <strong>No se puede iniciar sesión.</strong>
+                    <span><?= htmlspecialchars($dbMessage, ENT_QUOTES | ENT_HTML5, 'UTF-8') ?></span>
+                    <?php if (strpos($dbError ?? '', '[1049]') !== false || strpos($dbError ?? '', '[42S02]') !== false): ?>
+                        <a href="setup.php">Ir a la instalación</a>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
+
+            <?php if ($error_msg !== ''): ?>
+                <div class="login-alert" role="alert"><?= htmlspecialchars($error_msg, ENT_QUOTES | ENT_HTML5, 'UTF-8') ?></div>
+            <?php endif; ?>
+
         <form action="login.php" method="POST">
             <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrf_token) ?>">
-            <label for="username">Usuario:</label>
-            <input type="text" id="username" name="username" required autocomplete="username">
-            <label for="password">Contraseña:</label>
-            <input type="password" id="password" name="password" required autocomplete="current-password">
-            <button type="submit">Iniciar Sesión</button>
+            <label class="visually-hidden" for="username">Usuario</label>
+            <input type="text" id="username" name="username" placeholder="Usuario" required autocomplete="username" autofocus <?= !($pdo instanceof PDO) ? 'disabled' : '' ?>>
+            <label class="visually-hidden" for="password">Contraseña</label>
+            <input type="password" id="password" name="password" placeholder="Contraseña" required autocomplete="current-password" <?= !($pdo instanceof PDO) ? 'disabled' : '' ?>>
+            <button type="submit" <?= !($pdo instanceof PDO) ? 'disabled' : '' ?>>Iniciar sesión</button>
         </form>
-        <p style="text-align: center; margin-top: 20px; font-size: 12px; color: #666;">
-            Si es la primera vez, ejecuta <a href="setup.php">setup.php</a> para crear la base de datos.
-        </p>
+        <?php if (!($pdo instanceof PDO) && $dbMessage === ''): ?>
+            <p class="login-help"><a href="setup.php">Configurar la base de datos</a></p>
+        <?php endif; ?>
+        <p class="login-version"><span>POS</span> Sistema de punto de venta para restaurante</p>
+        </div>
     </div>
-    <script src="2.js"></script>
 </body>
 
 </html>

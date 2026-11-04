@@ -1,10 +1,11 @@
 <?php
 include 'data.php';
 include 'security.php';
-if (!isset($_SESSION['user']) || !($_SESSION['user']['permisos']['cocina'] ?? false)) {
-    header('Location: dashboard.php');
+if (!isset($_SESSION['user'])) {
+    header('Location: index.php');
     exit;
 }
+requirePermission('cocina');
 $ventas = getPedidosParaCocina();
 ?>
 <!DOCTYPE html>

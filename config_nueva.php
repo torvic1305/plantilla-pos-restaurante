@@ -10,10 +10,7 @@ if (!isset($_SESSION['user'])) {
 }
 
 $user = $_SESSION['user'];
-if ($user['rol'] !== 'gerente') {
-    header('Location: dashboard.php');
-    exit;
-}
+requirePermission('config');
 
 $config = getAppConfig();
 $mensaje = '';
