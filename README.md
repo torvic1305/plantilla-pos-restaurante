@@ -17,6 +17,10 @@ Sistema de punto de venta profesional para restaurante construido con HTML5, CSS
 - ✅ Suspensión y reanudación de ventas
 - ✅ Modal de confirmación antes de cobrar
 - ✅ Validación en servidor de productos y precios vigentes al guardar ventas y añadir artículos a ventas suspendidas
+- ✅ Venta directa de artículos comercializables del inventario, con cantidades por producto
+- ✅ Recetas por platillo con consumo automático de insumos al cobrar (también al completar una venta suspendida)
+- ✅ Registro de movimientos de inventario y alerta de existencias bajas con acceso directo a reposición
+- ✅ Stock fraccionario con precisión de tres decimales; las ventas pueden continuar aunque el inventario quede negativo
 
 ### Impresión y Recibos
 - ✅ Pre-recibo (preview del cliente)
@@ -60,17 +64,11 @@ Sistema de punto de venta profesional para restaurante construido con HTML5, CSS
 ## Instalación
 
 1. Inicia MySQL y configura `DB_HOST`, `DB_NAME`, `DB_USER` y `DB_PASS` en Apache si no usas los valores predeterminados (`localhost`, `restaurante_pos`, `root`, sin contraseña).
-2. Ejecuta `setup.php` en tu navegador: `http://localhost/restaurante/setup.php`. El instalador crea y actualiza las tablas; vuelve a ejecutarlo al instalar una actualización con cambios de base de datos. Las ventas anteriores a la actualización no se reabren como comandas; las ventas nuevas entran al KDS como pendientes. Requiere MySQL 5.7.8 o posterior.
-3. Accede a `index.php` para iniciar sesión.
+2. Ejecuta `setup.php` desde el mismo servidor (`http://localhost/restaurante/setup.php`) para la instalación inicial. El instalador crea las tablas y solicita crear una cuenta gerente propia; no crea usuarios ni contraseñas predeterminados.
+3. En instalaciones existentes, inicia sesión como gerente, abre `setup.php` y confirma la migración con el formulario protegido por CSRF. Las ventas anteriores a una actualización del KDS no se reabren como comandas; las ventas nuevas entran pendientes. Requiere MySQL 5.7.8 o posterior.
+4. Accede a `index.php` para iniciar sesión. Mantén el instalador inicial fuera del acceso público; el bootstrap solo acepta conexiones locales.
 
-## Usuarios por Defecto
-
-| Usuario | Contraseña | Rol |
-|---------|-----------|-----|
-| admin | pointofsale | Gerente |
-| super | VicSuper$1 | Gerente |
-| mesero1 | mesero123 | Mesero |
-| cocinero1 | cocinero123 | Cocinero |
+Las instalaciones anteriores podrían conservar cuentas de demostración ya creadas. Cambia sus contraseñas y elimina o desactiva las cuentas que no uses antes de exponer el sistema a una red.
 
 ## Estructura de Archivos
 

@@ -8,9 +8,21 @@ if (!isset($_SESSION['user'])) {
 requirePermission('informes');
 $desde = $_GET['desde'] ?? date('Y-m-d', strtotime('-30 days'));
 $hasta = $_GET['hasta'] ?? date('Y-m-d');
+$datePattern = '/^\d{4}-\d{2}-\d{2}$/';
+$desdeDate = is_string($desde) && preg_match($datePattern, $desde) ? DateTimeImmutable::createFromFormat('!Y-m-d', $desde) : false;
+$hastaDate = is_string($hasta) && preg_match($datePattern, $hasta) ? DateTimeImmutable::createFromFormat('!Y-m-d', $hasta) : false;
+if (
+    !$desdeDate || $desdeDate->format('Y-m-d') !== $desde ||
+    !$hastaDate || $hastaDate->format('Y-m-d') !== $hasta ||
+    $desdeDate > $hastaDate
+) {
+    http_response_code(400);
+    exit('El rango de fechas no es válido.');
+}
 
-$stmtCompleted = $pdo->prepare("SELECT v.*, e.nombre AS mesero_nombre FROM ventas v LEFT JOIN empleados e ON v.mesero_id = e.id WHERE v.fecha BETWEEN ? AND ? AND v.suspendida = 0");
-$stmtCompleted->execute([$desde, $hasta]);
+$hastaExclusivo = $hastaDate->modify('+1 day');
+$stmtCompleted = $pdo->prepare("SELECT v.*, e.nombre AS mesero_nombre FROM ventas v LEFT JOIN empleados e ON v.mesero_id = e.id WHERE v.fecha >= ? AND v.fecha < ? AND v.suspendida = 0");
+$stmtCompleted->execute([$desdeDate->format('Y-m-d 00:00:00'), $hastaExclusivo->format('Y-m-d 00:00:00')]);
 $ventasCompletadas = $stmtCompleted->fetchAll(PDO::FETCH_ASSOC);
 $totalCompletadas = 0;
 foreach ($ventasCompletadas as $v) {
@@ -20,8 +32,8 @@ foreach ($ventasCompletadas as $v) {
     }
 }
 
-$stmtSuspendidas = $pdo->prepare("SELECT v.*, e.nombre AS mesero_nombre FROM ventas v LEFT JOIN empleados e ON v.mesero_id = e.id WHERE v.fecha BETWEEN ? AND ? AND v.suspendida = 1");
-$stmtSuspendidas->execute([$desde, $hasta]);
+$stmtSuspendidas = $pdo->prepare("SELECT v.*, e.nombre AS mesero_nombre FROM ventas v LEFT JOIN empleados e ON v.mesero_id = e.id WHERE v.fecha >= ? AND v.fecha < ? AND v.suspendida = 1");
+$stmtSuspendidas->execute([$desdeDate->format('Y-m-d 00:00:00'), $hastaExclusivo->format('Y-m-d 00:00:00')]);
 $ventasSuspendidas = $stmtSuspendidas->fetchAll(PDO::FETCH_ASSOC);
 $totalSuspendidas = 0;
 foreach ($ventasSuspendidas as $v) {
@@ -51,9 +63,9 @@ foreach ($ventasSuspendidas as $v) {
         <h2>Rango de Fechas</h2>
         <form method="get">
             <label>Desde:</label>
-            <input type="date" name="desde" value="<?php echo $desde; ?>">
+            <input type="date" name="desde" value="<?php echo htmlspecialchars($desde, ENT_QUOTES | ENT_HTML5, 'UTF-8'); ?>">
             <label>Hasta:</label>
-            <input type="date" name="hasta" value="<?php echo $hasta; ?>">
+            <input type="date" name="hasta" value="<?php echo htmlspecialchars($hasta, ENT_QUOTES | ENT_HTML5, 'UTF-8'); ?>">
             <button type="submit">Filtrar</button>
         </form>
         <section>

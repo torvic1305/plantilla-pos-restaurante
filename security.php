@@ -44,6 +44,15 @@ function validateDecimal($input, $min = 0, $max = PHP_FLOAT_MAX)
     return ($float >= $min && $float <= $max) ? $float : null;
 }
 
+function validateQuantity($input, $min = 0, $max = 100000000)
+{
+    if (!is_numeric($input) || !is_finite((float) $input)) {
+        return null;
+    }
+    $quantity = round((float) $input, 3);
+    return ($quantity >= $min && $quantity <= $max) ? $quantity : null;
+}
+
 /**
  * Validar email
  */

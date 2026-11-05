@@ -29,32 +29,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $action = $_POST['action'] ?? 'add';
+        if ($action === 'restock') {
+            $restockId = validateInteger($_POST['id'] ?? null, 1, PHP_INT_MAX);
+            $restockQuantity = validateQuantity($_POST['cantidad_reponer'] ?? null, 0.001, 100000000);
+            if ($restockId === null || $restockQuantity === null) {
+                throw new Exception('Indica un artículo y una cantidad válida para reponer.');
+            }
+            adjustInventoryStock($restockId, $restockQuantity, 'Reposición desde inventario');
+            registrarAuditoria($_SESSION['user']['id'], 'REPONER_INVENTARIO', 'INVENTARIO', $restockId, 'Cantidad repuesta: ' . $restockQuantity);
+            header('Location: inventario.php?success=1');
+            exit;
+        }
+
         $item = sanitizeString($_POST['item'] ?? '', 100);
         $codigo_barras = sanitizeString($_POST['codigo_barras'] ?? '', 100);
         $categoria = sanitizeString($_POST['categoria'] ?? 'General', 120);
-        $cantidad = validateInteger($_POST['cantidad'] ?? 0, 0, 100000000);
-        $cantidad_minima = validateInteger($_POST['cantidad_minima'] ?? 0, 0, 100000000);
-        $cantidad_maxima = validateInteger($_POST['cantidad_maxima'] ?? 0, 0, 100000000);
+        $cantidad = validateQuantity($_POST['cantidad'] ?? 0, 0, 100000000);
+        $cantidad_minima = validateQuantity($_POST['cantidad_minima'] ?? 0, 0, 100000000);
+        $cantidad_maxima = validateQuantity($_POST['cantidad_maxima'] ?? 0, 0, 100000000);
         $precio_costo = validateDecimal($_POST['precio_costo'] ?? 0, 0, 1000000);
         $precio_venta = validateDecimal($_POST['precio_venta'] ?? 0, 0, 1000000);
         $proveedor = sanitizeString($_POST['proveedor'] ?? '', 100);
+        $unidad = sanitizeString($_POST['unidad'] ?? 'pieza', 20);
+        $allowedUnits = ['pieza', 'kg', 'g', 'L', 'ml', 'porción', 'paquete'];
         $id = validateInteger($_POST['id'] ?? 0, 0, PHP_INT_MAX);
 
         if ($action === 'save') {
             if ($item === '' || $categoria === '') {
                 throw new Exception('El nombre y la categoría del artículo son obligatorios.');
             }
-            if ($cantidad === null || $cantidad_minima === null || $cantidad_maxima === null) {
-                throw new Exception('Las cantidades deben ser números enteros iguales o mayores a cero.');
+            if ($cantidad === null || $cantidad_minima === null || $cantidad_maxima === null ||
+                $cantidad_maxima > 0 && $cantidad_maxima < $cantidad_minima) {
+                throw new Exception('Revisa las cantidades y confirma que el máximo sea mayor o igual al mínimo.');
             }
             if ($precio_costo === null || $precio_venta === null) {
                 throw new Exception('Revisa los precios de costo y venta.');
             }
+            if (!in_array($unidad, $allowedUnits, true)) {
+                throw new Exception('Selecciona una unidad de medida válida.');
+            }
             if ($id > 0) {
-                updateInventarioItem($id, $item, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $proveedor, $codigo_barras, $categoria, $precio_venta);
+                updateInventarioItem($id, $item, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $proveedor, $codigo_barras, $categoria, $precio_venta, $unidad);
                 $message = 'Item actualizado correctamente.';
             } else {
-                addInventarioItem($item, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $proveedor, $codigo_barras, $categoria, $precio_venta);
+                addInventarioItem($item, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $proveedor, $codigo_barras, $categoria, $precio_venta, $unidad);
                 $message = 'Item agregado correctamente.';
             }
             registrarAuditoria($_SESSION['user']['id'], 'GUARDAR_INVENTARIO', 'INVENTARIO', $id > 0 ? $id : null, $item);
@@ -102,6 +120,7 @@ $navigation = [
     ['Configuración', 'config.php', '⚙', $permissions['config'] ?? false],
     ['Cerrar Sesión', 'logout.php', '↪', true],
 ];
+$formatQuantity = static fn($value) => rtrim(rtrim(number_format((float) $value, 3, '.', ''), '0'), '.') ?: '0';
 $searchLabels = [
     'all' => 'Todo',
     'item' => 'Nombre',
@@ -202,13 +221,14 @@ $searchLabels = [
                                 <th scope="col" class="numeric-cell">Costo</th>
                                 <th scope="col" class="numeric-cell">Precio de venta</th>
                                 <th scope="col" class="numeric-cell">Cantidad</th>
+                                <th scope="col">Unidad</th>
                                 <?php if ($canEditInventory): ?><th scope="col">Acciones</th><?php endif; ?>
                             </tr>
                         </thead>
                         <tbody>
                             <?php foreach ($inventario as $item): ?>
-                                <?php $isLow = (int) $item['cantidad'] <= (int) $item['cantidad_minima']; ?>
-                                <tr>
+                                <?php $isLow = (float) $item['cantidad'] <= (float) $item['cantidad_minima']; ?>
+                                <tr id="inventory-item-<?= (int) $item['id'] ?>">
                                     <td><?= (int) $item['id'] ?></td>
                                     <td><?= $escape($item['codigo_barras'] ?? '') ?: '—' ?></td>
                                     <td><strong><?= $escape($item['item']) ?></strong></td>
@@ -216,12 +236,24 @@ $searchLabels = [
                                     <td class="numeric-cell">$<?= number_format((float) ($item['precio_costo'] ?? 0), 2) ?></td>
                                     <td class="numeric-cell">$<?= number_format((float) ($item['precio_venta'] ?? 0), 2) ?></td>
                                     <td class="numeric-cell <?= $isLow ? 'quantity-low' : '' ?>">
-                                        <?= (int) $item['cantidad'] ?>
+                                        <?= $formatQuantity($item['cantidad']) ?>
                                         <?php if ($isLow): ?><span class="stock-status">Bajo</span><?php endif; ?>
                                     </td>
+                                    <td><?= $escape($item['unidad'] ?? 'pieza') ?></td>
                                     <?php if ($canEditInventory): ?>
                                         <td class="inventory-actions">
                                             <a href="inventario.php?edit=<?= (int) $item['id'] ?>#inventory-form">Editar</a>
+                                            <?php if ($isLow): ?>
+                                                <form method="post" class="inventory-restock-form">
+                                                    <input type="hidden" name="csrf_token" value="<?= $escape(getCsrfToken()) ?>">
+                                                    <input type="hidden" name="action" value="restock">
+                                                    <input type="hidden" name="id" value="<?= (int) $item['id'] ?>">
+                                                    <label>Reponer
+                                                        <input type="number" name="cantidad_reponer" min="0.001" step="0.001" required aria-label="Cantidad a reponer de <?= $escape($item['item']) ?>">
+                                                    </label>
+                                                    <button type="submit">Registrar</button>
+                                                </form>
+                                            <?php endif; ?>
                                             <form method="post" onsubmit="return confirm('¿Eliminar este artículo de inventario?');">
                                                 <input type="hidden" name="csrf_token" value="<?= $escape(getCsrfToken()) ?>">
                                                 <input type="hidden" name="action" value="delete">
@@ -241,7 +273,20 @@ $searchLabels = [
                     <summary>Ver artículos que requieren reposición</summary>
                     <ul>
                         <?php foreach ($lowStockItems as $lowItem): ?>
-                            <li><?= $escape($lowItem['item']) ?> — <?= (int) $lowItem['cantidad'] ?> disponibles; mínimo <?= (int) $lowItem['cantidad_minima'] ?></li>
+                            <li>
+                                <?= $escape($lowItem['item']) ?> — <?= $formatQuantity($lowItem['cantidad']) ?> <?= $escape($lowItem['unidad'] ?? 'pieza') ?> disponibles; mínimo <?= $formatQuantity($lowItem['cantidad_minima']) ?>.
+                                <?php if ($canEditInventory): ?>
+                                    <form method="post" class="inventory-restock-form">
+                                        <input type="hidden" name="csrf_token" value="<?= $escape(getCsrfToken()) ?>">
+                                        <input type="hidden" name="action" value="restock">
+                                        <input type="hidden" name="id" value="<?= (int) $lowItem['id'] ?>">
+                                        <label>Reponer
+                                            <input type="number" name="cantidad_reponer" min="0.001" step="0.001" required aria-label="Cantidad a reponer de <?= $escape($lowItem['item']) ?>">
+                                        </label>
+                                        <button type="submit">Registrar reposición</button>
+                                    </form>
+                                <?php endif; ?>
+                            </li>
                         <?php endforeach; ?>
                     </ul>
                 </details>
@@ -268,13 +313,20 @@ $searchLabels = [
                     </datalist>
                 </label>
                 <label>Cantidad disponible
-                    <input type="number" name="cantidad" min="0" step="1" required value="<?= (int) ($editItem['cantidad'] ?? 0) ?>">
+                    <input type="number" name="cantidad" min="0" step="0.001" required value="<?= $escape($editItem['cantidad'] ?? '0') ?>">
                 </label>
                 <label>Cantidad mínima
-                    <input type="number" name="cantidad_minima" min="0" step="1" required value="<?= (int) ($editItem['cantidad_minima'] ?? 0) ?>">
+                    <input type="number" name="cantidad_minima" min="0" step="0.001" required value="<?= $escape($editItem['cantidad_minima'] ?? '0') ?>">
                 </label>
                 <label>Cantidad máxima sugerida
-                    <input type="number" name="cantidad_maxima" min="0" step="1" required value="<?= (int) ($editItem['cantidad_maxima'] ?? 0) ?>">
+                    <input type="number" name="cantidad_maxima" min="0" step="0.001" required value="<?= $escape($editItem['cantidad_maxima'] ?? '0') ?>">
+                </label>
+                <label>Unidad de medida (usada también en las recetas)
+                    <select name="unidad" required>
+                        <?php foreach (['pieza', 'kg', 'g', 'L', 'ml', 'porción', 'paquete'] as $unit): ?>
+                            <option value="<?= $escape($unit) ?>" <?= ($editItem['unidad'] ?? 'pieza') === $unit ? 'selected' : '' ?>><?= $escape($unit) ?></option>
+                        <?php endforeach; ?>
+                    </select>
                 </label>
                 <label>Precio de costo
                     <input type="number" name="precio_costo" min="0" max="1000000" step="0.01" required value="<?= $escape($editItem['precio_costo'] ?? '0') ?>">

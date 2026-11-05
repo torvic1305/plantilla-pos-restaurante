@@ -98,7 +98,8 @@ try {
         if ($name === '' || $price === null || $quantity === null) {
             printerResponse('error', 'Un artículo de la comanda contiene valores inválidos.', 400);
         }
-        $items[] = compact('name', 'category', 'note', 'price', 'quantity');
+        $type = ($item['tipo'] ?? 'menu') === 'inventario' ? 'inventario' : 'menu';
+        $items[] = compact('name', 'category', 'note', 'price', 'quantity', 'type');
     }
 
     if (!$isTest && $station !== 'recibo') {
@@ -107,6 +108,9 @@ try {
             ? array_map(static fn($category) => mb_strtolower(trim((string) $category)), $barCategories)
             : [];
         $items = array_values(array_filter($items, static function ($item) use ($station, $barCategories) {
+            if ($item['type'] === 'inventario') {
+                return false;
+            }
             $category = mb_strtolower(trim($item['category']));
             $isBarItem = $barCategories !== []
                 ? in_array($category, $barCategories, true)

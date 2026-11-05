@@ -17,6 +17,7 @@ $requiere_mesa = !empty($config['pos_require_table']);
 $impuesto = floatval($config['impuesto'] ?? 0);
 $meseros = getMeseros();
 $menu = getMenu();
+$inventarioVenta = getInventarioParaVenta();
 $promociones_activas = getPromocionesActivas();
 $promociones_pos = array_map(static function ($promo) {
     return [
@@ -56,6 +57,12 @@ $categorias_menu = [];
 foreach ($menu as $item) {
     $categoria = trim($item['categoria'] ?: 'General');
     if (!in_array($categoria, $categorias_menu)) {
+        $categorias_menu[] = $categoria;
+    }
+}
+foreach ($inventarioVenta as $item) {
+    $categoria = trim($item['categoria'] ?: 'Inventario');
+    if (!in_array($categoria, $categorias_menu, true)) {
         $categorias_menu[] = $categoria;
     }
 }
@@ -119,7 +126,11 @@ foreach ($menu as $item) {
                 </div>
                 <div class="menu-grid" id="menu-grid">
                     <?php foreach ($menu as $item) {
-                        echo "<button class='menu-item' data-id='" . htmlspecialchars($item['id']) . "' data-nombre='" . htmlspecialchars($item['nombre']) . "' data-precio='" . htmlspecialchars($item['precio']) . "' data-categoria='" . htmlspecialchars($item['categoria']) . "'>" . htmlspecialchars($item['nombre']) . " - $" . htmlspecialchars($item['precio']) . "</button>";
+                        echo "<button type='button' class='menu-item' data-tipo='menu' data-id='" . (int) $item['id'] . "' data-nombre='" . htmlspecialchars($item['nombre'], ENT_QUOTES | ENT_HTML5, 'UTF-8') . "' data-precio='" . htmlspecialchars($item['precio'], ENT_QUOTES | ENT_HTML5, 'UTF-8') . "' data-categoria='" . htmlspecialchars($item['categoria'], ENT_QUOTES | ENT_HTML5, 'UTF-8') . "'>" . htmlspecialchars($item['nombre'], ENT_QUOTES | ENT_HTML5, 'UTF-8') . " - $" . htmlspecialchars($item['precio'], ENT_QUOTES | ENT_HTML5, 'UTF-8') . "</button>";
+                    } ?>
+                    <?php if ($inventarioVenta): ?><h4 class="pos-inventory-heading" style="grid-column: 1 / -1;">Artículos de inventario</h4><?php endif; ?>
+                    <?php foreach ($inventarioVenta as $item) {
+                        echo "<button type='button' class='menu-item inventory-sale-item' data-tipo='inventario' data-id='" . (int) $item['id'] . "' data-nombre='" . htmlspecialchars($item['item'], ENT_QUOTES | ENT_HTML5, 'UTF-8') . "' data-precio='" . htmlspecialchars($item['precio_venta'], ENT_QUOTES | ENT_HTML5, 'UTF-8') . "' data-categoria='" . htmlspecialchars($item['categoria'] ?? 'Inventario', ENT_QUOTES | ENT_HTML5, 'UTF-8') . "' data-unidad='" . htmlspecialchars($item['unidad'] ?? 'pieza', ENT_QUOTES | ENT_HTML5, 'UTF-8') . "'>" . htmlspecialchars($item['item'], ENT_QUOTES | ENT_HTML5, 'UTF-8') . " (" . htmlspecialchars($item['unidad'] ?? 'pieza', ENT_QUOTES | ENT_HTML5, 'UTF-8') . ") - $" . htmlspecialchars($item['precio_venta'], ENT_QUOTES | ENT_HTML5, 'UTF-8') . "</button>";
                     } ?>
                 </div>
             </div>
@@ -326,7 +337,10 @@ foreach ($menu as $item) {
         }
 
         function calcularTotal(order = orden) {
-            return order.reduce((sum, item) => sum + (parseFloat(item.precio) || 0), 0);
+            return order.reduce((sum, item) => {
+                const quantity = Math.max(1, parseInt(item.cantidad || 1, 10));
+                return sum + (parseFloat(item.precio) || 0) * quantity;
+            }, 0);
         }
 
         function obtenerDescuentoPromocion(subtotal) {
@@ -389,11 +403,32 @@ foreach ($menu as $item) {
             list.innerHTML = '';
             orden.forEach((item, index) => {
                 const li = document.createElement('li');
-                let itemText = item.nombre + ' - $' + item.precio.toFixed(2);
+                const quantity = Math.max(1, parseInt(item.cantidad || 1, 10));
+                let itemText = quantity + ' x ' + item.nombre + ' - $' + item.precio.toFixed(2);
+                if (item.tipo === 'inventario') {
+                    itemText += ' / ' + (item.unidad || 'pieza');
+                }
                 if (item.nota) {
                     itemText += ' [Nota: ' + item.nota + ']';
                 }
                 li.textContent = itemText;
+
+                const quantityInput = document.createElement('input');
+                quantityInput.type = 'number';
+                quantityInput.min = '1';
+                quantityInput.max = '10000';
+                quantityInput.step = '1';
+                quantityInput.value = String(quantity);
+                quantityInput.setAttribute('aria-label', 'Cantidad de ' + item.nombre);
+                quantityInput.addEventListener('change', function () {
+                    const newQuantity = Number.parseInt(this.value, 10);
+                    if (!Number.isInteger(newQuantity) || newQuantity < 1 || newQuantity > 10000) {
+                        this.value = String(quantity);
+                        return;
+                    }
+                    orden[index].cantidad = newQuantity;
+                    actualizarOrden();
+                });
 
                 const editNote = document.createElement('button');
                 editNote.type = 'button';
@@ -414,6 +449,8 @@ foreach ($menu as $item) {
                     orden.splice(index, 1);
                     actualizarOrden();
                 });
+                li.appendChild(document.createTextNode(' Cantidad: '));
+                li.appendChild(quantityInput);
                 li.appendChild(document.createTextNode(' '));
                 li.appendChild(editNote);
                 li.appendChild(document.createTextNode(' '));
@@ -438,7 +475,7 @@ foreach ($menu as $item) {
             discountAmount.textContent = descuentoTotal.toFixed(2);
             taxAmount.textContent = impuestoCalculado.toFixed(2);
             totalAmount.textContent = totalConImpuesto.toFixed(2);
-            itemCount.textContent = orden.length;
+            itemCount.textContent = orden.reduce((count, item) => count + Math.max(1, parseInt(item.cantidad || 1, 10)), 0);
 
             if (tipoPagoSelect.value !== 'Efectivo') {
                 montoPagadoInput.value = totalConImpuesto.toFixed(2);
@@ -463,12 +500,18 @@ foreach ($menu as $item) {
             suspendidaAddedList.innerHTML = '';
             suspendidaOriginalOrder.forEach(item => {
                 const li = document.createElement('li');
-                li.textContent = item.nombre + ' - $' + parseFloat(item.precio).toFixed(2);
+                li.textContent = Math.max(1, parseInt(item.cantidad || 1, 10)) + ' x ' + item.nombre + ' - $' + parseFloat(item.precio).toFixed(2);
+                if (item.tipo === 'inventario') {
+                    li.textContent += ' / ' + (item.unidad || 'pieza');
+                }
                 suspendidaOrdenList.appendChild(li);
             });
             suspendidaAddedItems.forEach((item, index) => {
                 const li = document.createElement('li');
-                li.textContent = item.nombre + ' - $' + item.precio.toFixed(2);
+                li.textContent = Math.max(1, parseInt(item.cantidad || 1, 10)) + ' x ' + item.nombre + ' - $' + item.precio.toFixed(2);
+                if (item.tipo === 'inventario') {
+                    li.textContent += ' / ' + (item.unidad || 'pieza');
+                }
                 const remove = document.createElement('button');
                 remove.type = 'button';
                 remove.textContent = 'Quitar';
@@ -492,7 +535,7 @@ foreach ($menu as $item) {
             document.getElementById('suspendida-subtotal').textContent = subtotal.toFixed(2);
             document.getElementById('suspendida-discount').textContent = descuento.toFixed(2);
             suspendidaTotalDisplay.textContent = totalConImpuesto.toFixed(2);
-            suspendidaItemCount.textContent = ordenCompleta.length.toString();
+            suspendidaItemCount.textContent = ordenCompleta.reduce((count, item) => count + Math.max(1, parseInt(item.cantidad || 1, 10)), 0).toString();
 
             if (document.getElementById('suspendida-tipo-pago').value !== 'Efectivo') {
                 suspendidaMontoPagadoInput.value = totalConImpuesto.toFixed(2);
@@ -597,10 +640,15 @@ foreach ($menu as $item) {
             btn.addEventListener('click', function () {
                 const item = {
                     id: this.dataset.id,
+                    tipo: this.dataset.tipo || 'menu',
                     nombre: this.dataset.nombre,
                     precio: parseFloat(this.dataset.precio),
-                    categoria: this.dataset.categoria || ''
+                    categoria: this.dataset.categoria || '',
+                    cantidad: 1
                 };
+                if (this.dataset.tipo === 'inventario') {
+                    item.unidad = this.dataset.unidad || 'pieza';
+                }
                 if (editingSuspendidaId) {
                     suspendidaAddedItems.push(item);
                     actualizarSuspendidaOrden();
@@ -762,7 +810,7 @@ foreach ($menu as $item) {
             details += `<p><strong>Mesero:</strong> ${document.getElementById('mesero-select').options[document.getElementById('mesero-select').selectedIndex].text}</p>`;
             details += `<p><strong>Items:</strong></p><ul>`;
             orden.forEach(item => {
-                details += `<li>${item.nombre} - $${item.precio.toFixed(2)}</li>`;
+                details += `<li>${Math.max(1, parseInt(item.cantidad || 1, 10))} x ${item.nombre} - $${item.precio.toFixed(2)}</li>`;
             });
             details += `</ul>`;
             details += `<p><strong>Subtotal:</strong> $${subtotal.toFixed(2)}</p>`;
@@ -1288,6 +1336,9 @@ foreach ($menu as $item) {
         }
 
         function esProductoDeBarra(item) {
+            if (item.tipo === 'inventario') {
+                return false;
+            }
             const categoriasConfiguradas = configuracionPOS.impresoras.categoriasBarra
                 .map(categoria => String(categoria).trim().toLocaleLowerCase())
                 .filter(Boolean);
@@ -1300,7 +1351,7 @@ foreach ($menu as $item) {
 
         function imprimirComandaCocina(orden, contexto = obtenerContextoImpresion()) {
             const opciones = configuracionPOS.recibos;
-            const comida = orden.filter(item => !esProductoDeBarra(item));
+            const comida = orden.filter(item => item.tipo !== 'inventario' && !esProductoDeBarra(item));
             if (comida.length === 0) return Promise.resolve(null);
             const contenido = `
                 <div class="center"><strong>${opciones.titulo}</strong></div>
@@ -1313,12 +1364,12 @@ foreach ($menu as $item) {
                 <div class="items">${generarItemsHtml(comida)}</div>
                 <div class="footer center small">${opciones.pie}</div>
             `;
-            return enviarTrabajoImpresion('cocina', orden, contexto, {}, () => crearVentanaImpresion(opciones.titulo + ' - Comanda Cocina', contenido));
+            return enviarTrabajoImpresion('cocina', comida, contexto, {}, () => crearVentanaImpresion(opciones.titulo + ' - Comanda Cocina', contenido));
         }
 
         function imprimirComandaBarra(orden, contexto = obtenerContextoImpresion()) {
             const opciones = configuracionPOS.recibos;
-            const bebidas = orden.filter(esProductoDeBarra);
+            const bebidas = orden.filter(item => item.tipo !== 'inventario' && esProductoDeBarra(item));
             if (bebidas.length === 0) return Promise.resolve(null);
             const contenido = `
                 <div class="center"><strong>${opciones.titulo}</strong></div>
@@ -1331,7 +1382,7 @@ foreach ($menu as $item) {
                 <div class="items">${generarItemsHtml(bebidas)}</div>
                 <div class="footer center small">${opciones.pie}</div>
             `;
-            return enviarTrabajoImpresion('barra', orden, contexto, {}, () => crearVentanaImpresion(opciones.titulo + ' - Comanda Barra', contenido));
+            return enviarTrabajoImpresion('barra', bebidas, contexto, {}, () => crearVentanaImpresion(opciones.titulo + ' - Comanda Barra', contenido));
         }
 
         if (configuracionPOS.enfocarBusqueda) {

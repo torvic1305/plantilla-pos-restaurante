@@ -331,6 +331,7 @@ function normalizeMenuOrderItems($items)
 
     $normalizedItems = [];
     $menuIds = [];
+    $inventoryIds = [];
     foreach ($items as $item) {
         if (!is_array($item)) {
             throw new InvalidArgumentException('Estructura de orden inválida.');
@@ -343,9 +344,15 @@ function normalizeMenuOrderItems($items)
             throw new InvalidArgumentException('Producto, precio o cantidad inválida.');
         }
 
-        $menuIds[$id] = $id;
+        $type = ($item['tipo'] ?? 'menu') === 'inventario' ? 'inventario' : 'menu';
+        if ($type === 'inventario') {
+            $inventoryIds[$id] = $id;
+        } else {
+            $menuIds[$id] = $id;
+        }
         $normalizedItems[] = [
             'id' => $id,
+            'tipo' => $type,
             'precio_enviado' => $price,
             'cantidad' => $quantity,
             'nota' => isset($item['nota']) && is_string($item['nota'])
@@ -354,19 +361,32 @@ function normalizeMenuOrderItems($items)
         ];
     }
 
-    $placeholders = implode(',', array_fill(0, count($menuIds), '?'));
-    $stmt = $pdo->prepare("SELECT id, nombre, precio, categoria FROM menu WHERE id IN ($placeholders)");
-    $stmt->execute(array_values($menuIds));
     $menuById = [];
-    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $menuItem) {
-        $menuById[(int) $menuItem['id']] = $menuItem;
+    if ($menuIds !== []) {
+        $placeholders = implode(',', array_fill(0, count($menuIds), '?'));
+        $stmt = $pdo->prepare("SELECT id, nombre, precio, categoria FROM menu WHERE id IN ($placeholders)");
+        $stmt->execute(array_values($menuIds));
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $menuItem) {
+            $menuById['menu:' . (int) $menuItem['id']] = $menuItem;
+        }
+    }
+    if ($inventoryIds !== []) {
+        $placeholders = implode(',', array_fill(0, count($inventoryIds), '?'));
+        $stmt = $pdo->prepare(
+            "SELECT id, item AS nombre, precio_venta AS precio, categoria, unidad
+             FROM inventario WHERE id IN ($placeholders) AND precio_venta > 0"
+        );
+        $stmt->execute(array_values($inventoryIds));
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $inventoryItem) {
+            $menuById['inventario:' . (int) $inventoryItem['id']] = $inventoryItem;
+        }
     }
 
     $order = [];
     foreach ($normalizedItems as $item) {
-        $menuItem = $menuById[$item['id']] ?? null;
+        $menuItem = $menuById[$item['tipo'] . ':' . $item['id']] ?? null;
         if (!$menuItem) {
-            throw new InvalidArgumentException('Uno o más productos ya no están disponibles. Actualice el POS.');
+            throw new InvalidArgumentException('Uno o más productos ya no están disponibles para la venta. Actualice el POS.');
         }
 
         $currentPrice = round((float) $menuItem['precio'], 2);
@@ -378,11 +398,15 @@ function normalizeMenuOrderItems($items)
 
         $orderItem = [
             'id' => $item['id'],
+            'tipo' => $item['tipo'],
             'nombre' => $menuItem['nombre'],
             'precio' => $currentPrice,
             'categoria' => (string) ($menuItem['categoria'] ?? ''),
             'cantidad' => $item['cantidad'],
         ];
+        if ($item['tipo'] === 'inventario') {
+            $orderItem['unidad'] = (string) ($menuItem['unidad'] ?? 'pieza');
+        }
         if ($item['nota'] !== '') {
             $orderItem['nota'] = $item['nota'];
         }
@@ -446,6 +470,110 @@ function getInventarioBajoStock()
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
+function getInventarioParaVenta()
+{
+    global $pdo;
+    $stmt = $pdo->query(
+        'SELECT id, item, categoria, precio_venta, cantidad, unidad
+         FROM inventario WHERE precio_venta > 0 ORDER BY item ASC'
+    );
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function getRecetasMenu()
+{
+    global $pdo;
+    $stmt = $pdo->query(
+        'SELECT r.menu_id, r.inventario_id, r.cantidad, i.item, i.unidad
+         FROM menu_recetas r
+         INNER JOIN inventario i ON i.id = r.inventario_id
+         ORDER BY r.menu_id, i.item'
+    );
+    $recipes = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $recipes[(int) $row['menu_id']][] = $row;
+    }
+    return $recipes;
+}
+
+function saveMenuRecipe($menuId, $ingredients)
+{
+    global $pdo;
+    if (!is_array($ingredients) || count($ingredients) > 100) {
+        throw new InvalidArgumentException('La receta no es válida.');
+    }
+
+    $menuCheck = $pdo->prepare('SELECT id FROM menu WHERE id = ?');
+    $menuCheck->execute([$menuId]);
+    if (!$menuCheck->fetchColumn()) {
+        throw new InvalidArgumentException('El platillo seleccionado ya no existe.');
+    }
+
+    $normalized = [];
+    foreach ($ingredients as $ingredient) {
+        if (!is_array($ingredient)) {
+            throw new InvalidArgumentException('Ingrediente inválido.');
+        }
+        $inventoryId = validateInteger($ingredient['inventario_id'] ?? null, 1);
+        $quantity = validateQuantity($ingredient['cantidad'] ?? null, 0.001, 1000000);
+        if ($inventoryId === null || $quantity === null) {
+            throw new InvalidArgumentException('Cada ingrediente debe tener un artículo y una cantidad mayor a cero.');
+        }
+        $normalized[$inventoryId] = round(($normalized[$inventoryId] ?? 0) + $quantity, 3);
+    }
+
+    if ($normalized !== []) {
+        $placeholders = implode(',', array_fill(0, count($normalized), '?'));
+        $inventoryCheck = $pdo->prepare("SELECT COUNT(*) FROM inventario WHERE id IN ($placeholders)");
+        $inventoryCheck->execute(array_keys($normalized));
+        if ((int) $inventoryCheck->fetchColumn() !== count($normalized)) {
+            throw new InvalidArgumentException('Uno o más ingredientes ya no existen en el inventario.');
+        }
+    }
+
+    $pdo->beginTransaction();
+    try {
+        $delete = $pdo->prepare('DELETE FROM menu_recetas WHERE menu_id = ?');
+        $delete->execute([$menuId]);
+        $insert = $pdo->prepare(
+            'INSERT INTO menu_recetas (menu_id, inventario_id, cantidad) VALUES (?, ?, ?)'
+        );
+        foreach ($normalized as $inventoryId => $quantity) {
+            $insert->execute([$menuId, $inventoryId, $quantity]);
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+}
+
+function adjustInventoryStock($id, $quantity, $reason)
+{
+    global $pdo;
+    $pdo->beginTransaction();
+    try {
+        $stmt = $pdo->prepare('UPDATE inventario SET cantidad = cantidad + ? WHERE id = ?');
+        $stmt->execute([$quantity, $id]);
+        if ($stmt->rowCount() !== 1) {
+            throw new RuntimeException('El artículo de inventario no existe.');
+        }
+        $movement = $pdo->prepare(
+            "INSERT INTO movimientos_inventario (inventario_id, tipo, cantidad, motivo, usuario_id)
+             VALUES (?, 'reposicion', ?, ?, ?)"
+        );
+        $movement->execute([$id, $quantity, $reason, $_SESSION['user']['id'] ?? null]);
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+}
+
 function getInventarioItemById($id)
 {
     global $pdo;
@@ -454,25 +582,84 @@ function getInventarioItemById($id)
     return $stmt->fetch(PDO::FETCH_ASSOC);
 }
 
-function addInventarioItem($item, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $proveedor, $codigo_barras = '', $categoria = 'General', $precio_venta = 0)
+function addInventarioItem($item, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $proveedor, $codigo_barras = '', $categoria = 'General', $precio_venta = 0, $unidad = 'pieza')
 {
     global $pdo;
-    $stmt = $pdo->prepare("INSERT INTO inventario (item, codigo_barras, categoria, cantidad, cantidad_minima, cantidad_maxima, precio_costo, precio_venta, proveedor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-    $stmt->execute([$item, $codigo_barras ?: null, $categoria, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $precio_venta, $proveedor]);
-    registrarAuditoria($_SESSION['user']['id'] ?? null, 'CREATE', 'inventario', $pdo->lastInsertId(), "Item de inventario agregado: $item");
+    $pdo->beginTransaction();
+    try {
+        $stmt = $pdo->prepare("INSERT INTO inventario (item, codigo_barras, categoria, cantidad, cantidad_minima, cantidad_maxima, precio_costo, precio_venta, proveedor, unidad) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt->execute([$item, $codigo_barras ?: null, $categoria, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $precio_venta, $proveedor, $unidad]);
+        $id = (int) $pdo->lastInsertId();
+        if ($cantidad > 0) {
+            $movement = $pdo->prepare(
+                "INSERT INTO movimientos_inventario (inventario_id, tipo, cantidad, motivo, usuario_id)
+                 VALUES (?, 'ajuste_inicial', ?, 'Existencia inicial', ?)"
+            );
+            $movement->execute([$id, $cantidad, $_SESSION['user']['id'] ?? null]);
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+    registrarAuditoria($_SESSION['user']['id'] ?? null, 'CREATE', 'inventario', $id, "Item de inventario agregado: $item");
 }
 
-function updateInventarioItem($id, $item, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $proveedor, $codigo_barras = '', $categoria = 'General', $precio_venta = 0)
+function updateInventarioItem($id, $item, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $proveedor, $codigo_barras = '', $categoria = 'General', $precio_venta = 0, $unidad = 'pieza')
 {
     global $pdo;
-    $stmt = $pdo->prepare("UPDATE inventario SET item = ?, codigo_barras = ?, categoria = ?, cantidad = ?, cantidad_minima = ?, cantidad_maxima = ?, precio_costo = ?, precio_venta = ?, proveedor = ? WHERE id = ?");
-    $stmt->execute([$item, $codigo_barras ?: null, $categoria, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $precio_venta, $proveedor, $id]);
+    $pdo->beginTransaction();
+    try {
+        $existing = $pdo->prepare('SELECT cantidad, unidad FROM inventario WHERE id = ? FOR UPDATE');
+        $existing->execute([$id]);
+        $existingItem = $existing->fetch(PDO::FETCH_ASSOC);
+        if (!$existingItem) {
+            throw new RuntimeException('El artículo de inventario no existe.');
+        }
+        if ($existingItem['unidad'] !== $unidad) {
+            $recipeUsage = $pdo->prepare('SELECT COUNT(*) FROM menu_recetas WHERE inventario_id = ?');
+            $recipeUsage->execute([$id]);
+            $movementHistory = $pdo->prepare('SELECT COUNT(*) FROM movimientos_inventario WHERE inventario_id = ?');
+            $movementHistory->execute([$id]);
+            if ((int) $recipeUsage->fetchColumn() > 0 || (int) $movementHistory->fetchColumn() > 0 || (float) $existingItem['cantidad'] !== 0.0) {
+                throw new InvalidArgumentException('No se puede cambiar la unidad de un artículo con recetas, existencias o movimientos registrados.');
+            }
+        }
+        $stmt = $pdo->prepare("UPDATE inventario SET item = ?, codigo_barras = ?, categoria = ?, cantidad = ?, cantidad_minima = ?, cantidad_maxima = ?, precio_costo = ?, precio_venta = ?, proveedor = ?, unidad = ? WHERE id = ?");
+        $stmt->execute([$item, $codigo_barras ?: null, $categoria, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $precio_venta, $proveedor, $unidad, $id]);
+        $delta = round((float) $cantidad - (float) $existingItem['cantidad'], 3);
+        if ($delta !== 0.0) {
+            $movement = $pdo->prepare(
+                "INSERT INTO movimientos_inventario (inventario_id, tipo, cantidad, motivo, usuario_id)
+                 VALUES (?, 'ajuste', ?, 'Ajuste manual de existencia', ?)"
+            );
+            $movement->execute([$id, $delta, $_SESSION['user']['id'] ?? null]);
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
     registrarAuditoria($_SESSION['user']['id'] ?? null, 'UPDATE', 'inventario', $id, "Item de inventario actualizado: $item");
 }
 
 function deleteInventarioItem($id)
 {
     global $pdo;
+    $recipeUsage = $pdo->prepare('SELECT COUNT(*) FROM menu_recetas WHERE inventario_id = ?');
+    $recipeUsage->execute([$id]);
+    if ((int) $recipeUsage->fetchColumn() > 0) {
+        throw new InvalidArgumentException('No se puede eliminar este artículo porque se usa en una receta. Actualiza o elimina primero esas recetas.');
+    }
+    $movementHistory = $pdo->prepare('SELECT COUNT(*) FROM movimientos_inventario WHERE inventario_id = ?');
+    $movementHistory->execute([$id]);
+    if ((int) $movementHistory->fetchColumn() > 0) {
+        throw new InvalidArgumentException('No se puede eliminar este artículo porque tiene historial de inventario. Conserva el registro para mantener la auditoría.');
+    }
     $stmt = $pdo->prepare("DELETE FROM inventario WHERE id = ?");
     $stmt->execute([$id]);
     registrarAuditoria($_SESSION['user']['id'] ?? null, 'DELETE', 'inventario', $id, "Item de inventario eliminado");
@@ -518,6 +705,63 @@ function deleteCliente($id)
     registrarAuditoria($_SESSION['user']['id'] ?? null, 'DELETE', 'cliente', $id, "Cliente eliminado");
 }
 
+function consumeInventoryForSale($order, $saleId)
+{
+    global $pdo;
+    $requirements = [];
+    $menuIds = [];
+    foreach ($order as $item) {
+        $quantity = max(1, (int) ($item['cantidad'] ?? 1));
+        if (($item['tipo'] ?? 'menu') === 'inventario') {
+            $inventoryId = (int) ($item['id'] ?? 0);
+            $requirements[$inventoryId] = ($requirements[$inventoryId] ?? 0) + $quantity;
+        } else {
+            $menuId = (int) ($item['id'] ?? 0);
+            $menuIds[$menuId] = ($menuIds[$menuId] ?? 0) + $quantity;
+        }
+    }
+
+    if ($menuIds !== []) {
+        $placeholders = implode(',', array_fill(0, count($menuIds), '?'));
+        $recipeQuery = $pdo->prepare(
+            "SELECT inventario_id, menu_id, cantidad FROM menu_recetas WHERE menu_id IN ($placeholders)"
+        );
+        $recipeQuery->execute(array_keys($menuIds));
+        foreach ($recipeQuery->fetchAll(PDO::FETCH_ASSOC) as $recipe) {
+            $inventoryId = (int) $recipe['inventario_id'];
+            $used = (float) $recipe['cantidad'] * $menuIds[(int) $recipe['menu_id']];
+            $requirements[$inventoryId] = ($requirements[$inventoryId] ?? 0) + $used;
+        }
+    }
+
+    if ($requirements === []) {
+        return;
+    }
+
+    $adjust = $pdo->prepare('UPDATE inventario SET cantidad = cantidad - ? WHERE id = ?');
+    $movement = $pdo->prepare(
+        'INSERT INTO movimientos_inventario (inventario_id, tipo, cantidad, motivo, venta_id, usuario_id)
+         VALUES (?, ?, ?, ?, ?, ?)'
+    );
+    foreach ($requirements as $inventoryId => $quantity) {
+        if ($inventoryId <= 0 || $quantity <= 0) {
+            throw new RuntimeException('No se pudo calcular el consumo de inventario de la venta.');
+        }
+        $adjust->execute([$quantity, $inventoryId]);
+        if ($adjust->rowCount() !== 1) {
+            throw new RuntimeException('Un artículo requerido ya no existe en el inventario.');
+        }
+        $movement->execute([
+            $inventoryId,
+            'venta',
+            -round($quantity, 3),
+            'Consumo automático en venta #' . $saleId,
+            $saleId,
+            $_SESSION['user']['id'] ?? null,
+        ]);
+    }
+}
+
 function getVentas()
 {
     global $pdo;
@@ -536,14 +780,30 @@ function getPedidosParaCocina()
 function addVenta($mesero_id, $mesa, $orden, $suspendida = false, $tipo_pago = null, $propina = 0, $monto_pagado = 0, $descuento = 0, $impuesto = 0)
 {
     global $pdo;
-    $orden_json = json_encode($orden);
-    $estadoCocina = $suspendida ? 'no_enviada' : 'pendiente';
-    $stmt = $pdo->prepare("INSERT INTO ventas (mesero_id, mesa, orden, suspendida, tipo_pago, propina, monto_pagado, descuento, impuesto, estado_cocina, cocina_actualizada) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())");
-    $stmt->execute([$mesero_id, $mesa, $orden_json, $suspendida, $tipo_pago, $propina, $monto_pagado, $descuento, $impuesto, $estadoCocina]);
-    $ventaId = $pdo->lastInsertId();
-    // Auditoría
-    registrarAuditoria($_SESSION['user']['id'] ?? null, 'CREATE', 'venta', $ventaId, "Venta " . ($suspendida ? "suspendida" : "completada"));
-    return $ventaId;
+    $ownsTransaction = !$pdo->inTransaction();
+    if ($ownsTransaction) {
+        $pdo->beginTransaction();
+    }
+    try {
+        $orden_json = json_encode($orden, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+        $estadoCocina = $suspendida ? 'no_enviada' : 'pendiente';
+        $stmt = $pdo->prepare("INSERT INTO ventas (mesero_id, mesa, orden, suspendida, tipo_pago, propina, monto_pagado, descuento, impuesto, estado_cocina, cocina_actualizada) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())");
+        $stmt->execute([$mesero_id, $mesa, $orden_json, $suspendida, $tipo_pago, $propina, $monto_pagado, $descuento, $impuesto, $estadoCocina]);
+        $ventaId = (int) $pdo->lastInsertId();
+        if (!$suspendida) {
+            consumeInventoryForSale($orden, $ventaId);
+        }
+        registrarAuditoria($_SESSION['user']['id'] ?? null, 'CREATE', 'venta', $ventaId, "Venta " . ($suspendida ? "suspendida" : "completada"));
+        if ($ownsTransaction) {
+            $pdo->commit();
+        }
+        return $ventaId;
+    } catch (Throwable $e) {
+        if ($ownsTransaction && $pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
 }
 
 function getMeseros()
@@ -597,15 +857,42 @@ function updateVentaOrden($id, $orden)
     $stmt->execute([$orden_json, $id]);
 }
 
-function completarVenta($id, $tipo_pago, $propina = 0, $monto_pagado = 0, $descuento = 0, $impuesto = 0)
+function completarVenta($id, $tipo_pago, $propina = 0, $monto_pagado = 0, $descuento = 0, $impuesto = 0, $orden = null)
 {
     global $pdo;
     $propina = max(0, floatval($propina));
     $monto_pagado = max(0, floatval($monto_pagado));
     $descuento = max(0, floatval($descuento));
     $impuesto = max(0, floatval($impuesto));
-    $stmt = $pdo->prepare("UPDATE ventas SET suspendida = 0, tipo_pago = ?, propina = ?, monto_pagado = ?, descuento = ?, impuesto = ?, estado_cocina = 'pendiente', cocina_actualizada = NOW() WHERE id = ?");
-    $stmt->execute([$tipo_pago, $propina, $monto_pagado, $descuento, $impuesto, $id]);
+    $pdo->beginTransaction();
+    try {
+        $saleQuery = $pdo->prepare('SELECT orden FROM ventas WHERE id = ? AND suspendida = 1 FOR UPDATE');
+        $saleQuery->execute([$id]);
+        $currentOrderJson = $saleQuery->fetchColumn();
+        if ($currentOrderJson === false) {
+            throw new RuntimeException('La venta ya fue completada o no está disponible.');
+        }
+        if ($orden === null) {
+            $orden = json_decode($currentOrderJson, true);
+        }
+        if (!is_array($orden) || $orden === []) {
+            throw new RuntimeException('La orden de venta no es válida.');
+        }
+
+        $orderJson = json_encode($orden, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+        $stmt = $pdo->prepare("UPDATE ventas SET orden = ?, suspendida = 0, tipo_pago = ?, propina = ?, monto_pagado = ?, descuento = ?, impuesto = ?, estado_cocina = 'pendiente', cocina_actualizada = NOW() WHERE id = ? AND suspendida = 1");
+        $stmt->execute([$orderJson, $tipo_pago, $propina, $monto_pagado, $descuento, $impuesto, $id]);
+        if ($stmt->rowCount() !== 1) {
+            throw new RuntimeException('La venta ya fue completada o no está disponible.');
+        }
+        consumeInventoryForSale($orden, $id);
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
 }
 
 function updateVentaPropina($id, $propina)

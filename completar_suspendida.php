@@ -85,8 +85,7 @@ try {
         $monto_pagado = $total;
     }
 
-    updateVentaOrden($venta['id'], $orden_actualizada);
-    completarVenta($venta['id'], $tipo_pago, $propina, $monto_pagado, $descuento, $impuesto);
+    completarVenta($venta['id'], $tipo_pago, $propina, $monto_pagado, $descuento, $impuesto, $orden_actualizada);
     registrarAuditoria($_SESSION['user']['id'], 'COMPLETAR_SUSPENDIDA', 'VENTA', $venta['id'], "Propina: {$propina}, Monto pagado: {$monto_pagado}");
 
     header('Content-Type: application/json');

@@ -1,6 +1,7 @@
 <?php
 error_reporting(E_ALL);
-ini_set('display_errors', 1);
+ini_set('display_errors', '0');
+ini_set('log_errors', '1');
 
 include 'data.php';
 include 'security.php';
@@ -54,6 +55,9 @@ for ($i = 6; $i >= 0; $i--) {
     ];
 }
 $lowStockItems = !empty($permisos['inventario_ver']) ? getInventarioBajoStock() : [];
+$formatStockQuantity = static function ($quantity) {
+    return rtrim(rtrim(number_format((float) $quantity, 3, '.', ''), '0'), '.');
+};
 
 $menuNavegacion = [
     ['Panel', 'dashboard.php', '⌂', true],
@@ -209,8 +213,12 @@ $accionesRapidas = [
                     <ul>
                         <?php foreach ($lowStockItems as $item): ?>
                             <li>
-                                <?= htmlspecialchars($item['item']) ?> — Existencia: <?= (int) $item['cantidad'] ?>
-                                / mínimo: <?= (int) $item['cantidad_minima'] ?>
+                                <?= htmlspecialchars($item['item'], ENT_QUOTES | ENT_HTML5, 'UTF-8') ?> — Existencia:
+                                <?= $formatStockQuantity($item['cantidad']) ?> <?= htmlspecialchars($item['unidad'] ?? 'pieza', ENT_QUOTES | ENT_HTML5, 'UTF-8') ?>
+                                / mínimo: <?= $formatStockQuantity($item['cantidad_minima']) ?>
+                                <?php if (!empty($permisos['inventario_editar'])): ?>
+                                    <a href="inventario.php#inventory-item-<?= (int) $item['id'] ?>">Reponer o ajustar</a>
+                                <?php endif; ?>
                             </li>
                         <?php endforeach; ?>
                     </ul>
