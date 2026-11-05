@@ -24,6 +24,8 @@ $promociones_pos = array_map(static function ($promo) {
         'descuento' => max(0, min(100, (float) ($promo['descuento'] ?? 0)))
     ];
 }, $promociones_activas);
+$puedeConfigurar = !empty($user['permisos']['config']);
+$meseros_pos = $puedeConfigurar ? ($meseros ?: [$user]) : [$user];
 $config_recibos = [
     'nombre' => (string) ($config['nombre_restaurante'] ?? 'Restaurante POS'),
     'titulo' => (string) ($config['recibo_titulo'] ?? 'Restaurante POS'),
@@ -50,7 +52,6 @@ $config_impresoras = [
         ? $config['impresora_categorias_barra']
         : [],
 ];
-$puedeConfigurar = !empty($user['permisos']['config']);
 $categorias_menu = [];
 foreach ($menu as $item) {
     $categoria = trim($item['categoria'] ?: 'General');
@@ -84,10 +85,11 @@ foreach ($menu as $item) {
                         value="<?php echo count($mesas); ?>"></label>
                     <button id="guardar-mesas">Guardar mesas</button>
                 </div>
+                <?php endif; ?>
                 <h4>Asignar mesa</h4>
                 <select id="mesero-select">
-                    <?php foreach ($meseros as $m) {
-                        echo "<option value='{$m['id']}'>{$m['nombre']}</option>";
+                    <?php foreach ($meseros_pos as $m) {
+                        echo "<option value='" . (int) $m['id'] . "'>" . htmlspecialchars($m['nombre'], ENT_QUOTES | ENT_HTML5, 'UTF-8') . "</option>";
                     } ?>
                 </select>
                 <div class="mesas-grid">
@@ -99,7 +101,7 @@ foreach ($menu as $item) {
                     <?php endif; ?>
                 </div>
                 <p>Mesero asignado: <span
-                        id="current-mesero-text"><?php echo htmlspecialchars($meseros[0]['nombre'] ?? ''); ?></span></p>
+                        id="current-mesero-text"><?php echo htmlspecialchars($meseros_pos[0]['nombre'] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8'); ?></span></p>
                 <p>Mesa seleccionada: <span id="current-mesa-text">Ninguna</span></p>
             </div>
             <div class="menu">
@@ -147,11 +149,13 @@ foreach ($menu as $item) {
                     <label>Cambio: $<span id="cambio-amount">0.00</span></label>
                 </div>
                 <div class="venta-acciones">
+                    <button id="imprimir-comandas-rapido" type="button">Imprimir comandas (cocina y barra)</button>
                     <button id="imprimir-pre-recibo">Imprimir Pre-Recibo</button>
                     <button id="cobrar">Cobrar</button>
                     <button id="suspender" <?= empty($user['permisos']['ventas_suspendidas_ver']) ? 'hidden' : '' ?>>Suspender Venta</button>
                     <button id="limpiar-orden">Limpiar Orden</button>
                 </div>
+                <p id="estado-impresion-comandas" role="status" aria-live="polite"></p>
                 <div id="promo-banner" class="promo-banner"
                     style="display:none; margin-top: 12px; padding: 10px; border-radius: 6px; background:#fff3cd; color:#856404;">
                     <strong>Promoción activa:</strong> <span id="promocion-text"></span>
@@ -225,7 +229,6 @@ foreach ($menu as $item) {
                         <label>Propina: $<input type="number" id="suspendida-propina" min="0" step="0.01"
                                 value="0"></label>
                     </div>
-                    <?php endif; ?>
                     <div class="venta-acciones">
                         <button id="imprimir-pre-recibo-suspendida">Imprimir Pre-Recibo</button>
                         <button id="imprimir-cocina-suspendida">Imprimir Cocina</button>
@@ -305,7 +308,7 @@ foreach ($menu as $item) {
         const montoPagadoInput = document.getElementById('monto-pagado');
         const cambioAmount = document.getElementById('cambio-amount');
         const tipoPagoSelect = document.getElementById('tipo-pago');
-        const propinaVentaInput = document.getElementById('propina-venta');
+        let propinaVentaInput = document.getElementById('propina-venta');
         const propinaTipoSelect = document.getElementById('propina-tipo');
         const propinaInputLabel = document.getElementById('propina-input-label');
         const propinaValorText = document.getElementById('propina-valor-text');
@@ -848,6 +851,44 @@ foreach ($menu as $item) {
             imprimirPreRecibo(orden, subtotal, descuento, total);
         });
 
+        document.getElementById('imprimir-comandas-rapido').addEventListener('click', async function () {
+            if (!orden.length) {
+                alert('Agregue productos antes de imprimir las comandas.');
+                return;
+            }
+
+            const button = this;
+            const status = document.getElementById('estado-impresion-comandas');
+            button.disabled = true;
+            status.textContent = 'Enviando comandas a las estaciones…';
+            try {
+                const results = await Promise.all([
+                    imprimirComandaCocina(orden),
+                    imprimirComandaBarra(orden)
+                ]);
+                const sentCount = results.filter(result => result === true).length;
+                const failedCount = results.filter(result => result === false).length;
+                const attemptedCount = results.filter(result => result !== null).length;
+                if (failedCount > 0) {
+                    status.textContent = sentCount > 0
+                        ? 'Impresión parcial: una estación no confirmó la comanda. Revise las alertas y la impresora.'
+                        : 'No se confirmó la impresión. Revise las alertas y la impresora.';
+                } else if (sentCount > 0) {
+                    status.textContent = sentCount === 2
+                        ? 'Comandas enviadas a cocina y barra.'
+                        : 'Comanda enviada a la estación que tiene productos asignados.';
+                } else {
+                    status.textContent = attemptedCount === 0
+                        ? 'No hay productos asignados a cocina o barra en esta orden.'
+                        : 'No se pudo confirmar la impresión.';
+                }
+            } catch (error) {
+                status.textContent = error.message || 'No se pudieron enviar las comandas.';
+            } finally {
+                button.disabled = false;
+            }
+        });
+
         document.getElementById('imprimir').addEventListener('click', function () {
             if (!orden.length) {
                 alert('Agregue productos para imprimir.');
@@ -1112,7 +1153,7 @@ foreach ($menu as $item) {
             const win = window.open('', '_blank');
             if (!win) {
                 alert('No se pudo abrir la ventana de impresión. Verifique el bloqueador de ventanas emergentes.');
-                return;
+                return false;
             }
             win.document.write(`<!DOCTYPE html><html><head><title>${titulo}</title><style>
                 body { font-family: Arial, sans-serif; font-size: 12px; margin: 0; padding: 10px; width: 80mm; }
@@ -1126,6 +1167,7 @@ foreach ($menu as $item) {
             win.document.close();
             win.focus();
             win.print();
+            return true;
         }
 
         function escaparHtmlImpresion(valor) {
@@ -1150,11 +1192,10 @@ foreach ($menu as $item) {
         function enviarTrabajoImpresion(estacion, orden, contexto, datos, impresionLocal) {
             const impresora = configuracionPOS.impresoras[estacion];
             if (!impresora || !impresora.ip) {
-                impresionLocal();
-                return;
+                return Promise.resolve(impresionLocal() !== false);
             }
 
-            fetch('imprimir_comanda.php', {
+            return fetch('imprimir_comanda.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
                 body: JSON.stringify({
@@ -1177,9 +1218,12 @@ foreach ($menu as $item) {
                     if (!result.message.includes('no contiene productos')) {
                         console.info(result.message);
                     }
+                    return !result.message.includes('no contiene productos');
                 })
                 .catch(error => {
-                    alert(error.message || 'Error de conexión con la impresora.');
+                    const stationName = estacion === 'cocina' ? 'cocina' : 'barra';
+                    alert('No se pudo imprimir en ' + stationName + ': ' + (error.message || 'error de conexión con la impresora.'));
+                    return false;
                 });
         }
 
@@ -1257,7 +1301,7 @@ foreach ($menu as $item) {
         function imprimirComandaCocina(orden, contexto = obtenerContextoImpresion()) {
             const opciones = configuracionPOS.recibos;
             const comida = orden.filter(item => !esProductoDeBarra(item));
-            if (comida.length === 0) return;
+            if (comida.length === 0) return Promise.resolve(null);
             const contenido = `
                 <div class="center"><strong>${opciones.titulo}</strong></div>
                 <div class="center"><strong>COMANDA COCINA</strong></div>
@@ -1269,13 +1313,13 @@ foreach ($menu as $item) {
                 <div class="items">${generarItemsHtml(comida)}</div>
                 <div class="footer center small">${opciones.pie}</div>
             `;
-            enviarTrabajoImpresion('cocina', orden, contexto, {}, () => crearVentanaImpresion(opciones.titulo + ' - Comanda Cocina', contenido));
+            return enviarTrabajoImpresion('cocina', orden, contexto, {}, () => crearVentanaImpresion(opciones.titulo + ' - Comanda Cocina', contenido));
         }
 
         function imprimirComandaBarra(orden, contexto = obtenerContextoImpresion()) {
             const opciones = configuracionPOS.recibos;
             const bebidas = orden.filter(esProductoDeBarra);
-            if (bebidas.length === 0) return;
+            if (bebidas.length === 0) return Promise.resolve(null);
             const contenido = `
                 <div class="center"><strong>${opciones.titulo}</strong></div>
                 <div class="center"><strong>COMANDA BARRA</strong></div>
@@ -1287,7 +1331,7 @@ foreach ($menu as $item) {
                 <div class="items">${generarItemsHtml(bebidas)}</div>
                 <div class="footer center small">${opciones.pie}</div>
             `;
-            enviarTrabajoImpresion('barra', orden, contexto, {}, () => crearVentanaImpresion(opciones.titulo + ' - Comanda Barra', contenido));
+            return enviarTrabajoImpresion('barra', orden, contexto, {}, () => crearVentanaImpresion(opciones.titulo + ' - Comanda Barra', contenido));
         }
 
         if (configuracionPOS.enfocarBusqueda) {

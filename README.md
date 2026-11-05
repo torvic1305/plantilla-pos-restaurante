@@ -16,11 +16,13 @@ Sistema de punto de venta profesional para restaurante construido con HTML5, CSS
 - ✅ Sistema de propinas con quick-select (0%, 10%, 15%, 20%)
 - ✅ Suspensión y reanudación de ventas
 - ✅ Modal de confirmación antes de cobrar
+- ✅ Validación en servidor de productos y precios vigentes al guardar ventas y añadir artículos a ventas suspendidas
 
 ### Impresión y Recibos
 - ✅ Pre-recibo (preview del cliente)
 - ✅ Recibo final completo
 - ✅ Comandas separadas para cocina y barra
+- ✅ Impresión de comandas de cocina y barra con una sola acción desde el POS
 - ✅ Envío de recibos y comandas a impresoras térmicas de red ESC/POS por estación
 - ✅ Impresión directo a impresora de recibos 80mm
 - ✅ Reimpresión de documentos (desde POS e informes)
@@ -36,10 +38,12 @@ Sistema de punto de venta profesional para restaurante construido con HTML5, CSS
 
 ### Gestión Administrativa
 - ✅ Panel de empleados con roles (Mesero, Cocinero, Gerente)
+- ✅ Acceso desde Configuración para administrar empleados y permisos
 - ✅ Gestión de menú con precios y categorías
+- ✅ Inventario con búsqueda por campos, categorías, código de barras, costo y precio de venta
 - ✅ Sistema de promociones con rango de fechas
 - ✅ Registro de merma (pérdidas/daños)
-- ✅ Kitchen Display System (KDS) para cocina
+- ✅ Kitchen Display System (KDS) con estados de preparación, antigüedad de comandas y actualización automática
 - ✅ Cierre de caja diario con resumen completo
 - ✅ Auditoría de todas las operaciones
 - ✅ Configuración personalizable de impuestos, mesas, POS, recibos y apariencia
@@ -56,7 +60,7 @@ Sistema de punto de venta profesional para restaurante construido con HTML5, CSS
 ## Instalación
 
 1. Inicia MySQL y configura `DB_HOST`, `DB_NAME`, `DB_USER` y `DB_PASS` en Apache si no usas los valores predeterminados (`localhost`, `restaurante_pos`, `root`, sin contraseña).
-2. Ejecuta `setup.php` en tu navegador: `http://localhost/restaurante/setup.php`. El instalador crea y actualiza las tablas; requiere MySQL 5.7.8 o posterior.
+2. Ejecuta `setup.php` en tu navegador: `http://localhost/restaurante/setup.php`. El instalador crea y actualiza las tablas; vuelve a ejecutarlo al instalar una actualización con cambios de base de datos. Las ventas anteriores a la actualización no se reabren como comandas; las ventas nuevas entran al KDS como pendientes. Requiere MySQL 5.7.8 o posterior.
 3. Accede a `index.php` para iniciar sesión.
 
 ## Usuarios por Defecto
@@ -85,6 +89,7 @@ restaurante/
 ├── merma.php              # Registro de pérdidas
 ├── promociones.php        # Gestión de promociones
 ├── cocina.php             # Kitchen Display System
+├── actualizar_estado_comanda.php # Actualización segura de estados de cocina
 ├── config.php             # Configuración app
 ├── data.php               # Capa de datos (BD)
 ├── style.php              # CSS dinámico

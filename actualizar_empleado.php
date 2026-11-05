@@ -15,11 +15,6 @@ if ($id === null) {
     exit;
 }
 
-if ($id === (int) $_SESSION['user']['id']) {
-    header('Location: empleados.php?error=No%20puedes%20cambiar%20tus%20propios%20permisos');
-    exit;
-}
-
 $stmt = $pdo->prepare('SELECT usuario FROM empleados WHERE id = ?');
 $stmt->execute([$id]);
 $target = $stmt->fetch(PDO::FETCH_ASSOC);

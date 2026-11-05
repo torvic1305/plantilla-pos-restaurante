@@ -39,27 +39,14 @@ try {
         throw new Exception($mesaRequerida ? 'Seleccione una mesa válida.' : 'Número de mesa inválido.');
     }
 
-    // Validar orden
-    $orden = is_array($data['orden']) ? $data['orden'] : [];
+    $orden = normalizeMenuOrderItems($data['orden']);
     if (empty($orden)) {
         throw new Exception('Orden vacía');
     }
 
-    // Validar estructura de orden
     $total = 0;
     foreach ($orden as $item) {
-        if (
-            !isset($item['id'], $item['nombre'], $item['precio']) ||
-            !is_numeric($item['id']) || !is_numeric($item['precio'])
-        ) {
-            throw new Exception('Estructura de orden inválida');
-        }
-        $precio = floatval($item['precio']);
-        $cantidad = max(1, intval($item['cantidad'] ?? 1));
-        if ($precio < 0 || $cantidad <= 0) {
-            throw new Exception('Precio o cantidad inválida');
-        }
-        $total += $precio * $cantidad;
+        $total += $item['precio'] * $item['cantidad'];
     }
 
     if ($total <= 0) {

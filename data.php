@@ -321,6 +321,77 @@ function getMenu()
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
+function normalizeMenuOrderItems($items)
+{
+    global $pdo;
+
+    if (!is_array($items) || $items === []) {
+        return [];
+    }
+
+    $normalizedItems = [];
+    $menuIds = [];
+    foreach ($items as $item) {
+        if (!is_array($item)) {
+            throw new InvalidArgumentException('Estructura de orden inválida.');
+        }
+
+        $id = filter_var($item['id'] ?? null, FILTER_VALIDATE_INT);
+        $price = validateDecimal($item['precio'] ?? null, 0, 999999);
+        $quantity = validateInteger($item['cantidad'] ?? 1, 1, 10000);
+        if ($id === false || $id < 1 || $price === null || $quantity === null) {
+            throw new InvalidArgumentException('Producto, precio o cantidad inválida.');
+        }
+
+        $menuIds[$id] = $id;
+        $normalizedItems[] = [
+            'id' => $id,
+            'precio_enviado' => $price,
+            'cantidad' => $quantity,
+            'nota' => isset($item['nota']) && is_string($item['nota'])
+                ? sanitizeString($item['nota'], 500)
+                : '',
+        ];
+    }
+
+    $placeholders = implode(',', array_fill(0, count($menuIds), '?'));
+    $stmt = $pdo->prepare("SELECT id, nombre, precio, categoria FROM menu WHERE id IN ($placeholders)");
+    $stmt->execute(array_values($menuIds));
+    $menuById = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $menuItem) {
+        $menuById[(int) $menuItem['id']] = $menuItem;
+    }
+
+    $order = [];
+    foreach ($normalizedItems as $item) {
+        $menuItem = $menuById[$item['id']] ?? null;
+        if (!$menuItem) {
+            throw new InvalidArgumentException('Uno o más productos ya no están disponibles. Actualice el POS.');
+        }
+
+        $currentPrice = round((float) $menuItem['precio'], 2);
+        if (abs($item['precio_enviado'] - $currentPrice) > 0.001) {
+            throw new InvalidArgumentException(
+                'El precio de ' . $menuItem['nombre'] . ' cambió. Actualice el POS antes de continuar.'
+            );
+        }
+
+        $orderItem = [
+            'id' => $item['id'],
+            'nombre' => $menuItem['nombre'],
+            'precio' => $currentPrice,
+            'categoria' => (string) ($menuItem['categoria'] ?? ''),
+            'cantidad' => $item['cantidad'],
+        ];
+        if ($item['nota'] !== '') {
+            $orderItem['nota'] = $item['nota'];
+        }
+        $order[] = $orderItem;
+    }
+
+    return $order;
+}
+
 function addMenuItem($nombre, $precio, $categoria)
 {
     global $pdo;
@@ -330,11 +401,42 @@ function addMenuItem($nombre, $precio, $categoria)
 }
 
 // Funciones para inventario
-function getInventario()
+function getInventario($search = '', $field = 'all', $category = '')
 {
     global $pdo;
-    $stmt = $pdo->query("SELECT * FROM inventario ORDER BY item ASC");
+    $sql = 'SELECT * FROM inventario WHERE 1=1';
+    $params = [];
+    $fields = [
+        'item' => 'item',
+        'codigo_barras' => 'codigo_barras',
+        'categoria' => 'categoria',
+        'proveedor' => 'proveedor',
+    ];
+    if ($search !== '') {
+        if ($field !== 'all' && isset($fields[$field])) {
+            $sql .= ' AND ' . $fields[$field] . ' LIKE ?';
+            $params[] = '%' . $search . '%';
+        } else {
+            $sql .= ' AND (item LIKE ? OR codigo_barras LIKE ? OR categoria LIKE ? OR proveedor LIKE ?)';
+            $searchTerm = '%' . $search . '%';
+            array_push($params, $searchTerm, $searchTerm, $searchTerm, $searchTerm);
+        }
+    }
+    if ($category !== '') {
+        $sql .= ' AND categoria = ?';
+        $params[] = $category;
+    }
+    $sql .= ' ORDER BY item ASC';
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function getCategoriasInventario()
+{
+    global $pdo;
+    $stmt = $pdo->query("SELECT DISTINCT categoria FROM inventario WHERE categoria IS NOT NULL AND TRIM(categoria) <> '' ORDER BY categoria ASC");
+    return $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
 function getInventarioBajoStock()
@@ -352,19 +454,19 @@ function getInventarioItemById($id)
     return $stmt->fetch(PDO::FETCH_ASSOC);
 }
 
-function addInventarioItem($item, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $proveedor)
+function addInventarioItem($item, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $proveedor, $codigo_barras = '', $categoria = 'General', $precio_venta = 0)
 {
     global $pdo;
-    $stmt = $pdo->prepare("INSERT INTO inventario (item, cantidad, cantidad_minima, cantidad_maxima, precio_costo, proveedor) VALUES (?, ?, ?, ?, ?, ?)");
-    $stmt->execute([$item, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $proveedor]);
+    $stmt = $pdo->prepare("INSERT INTO inventario (item, codigo_barras, categoria, cantidad, cantidad_minima, cantidad_maxima, precio_costo, precio_venta, proveedor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    $stmt->execute([$item, $codigo_barras ?: null, $categoria, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $precio_venta, $proveedor]);
     registrarAuditoria($_SESSION['user']['id'] ?? null, 'CREATE', 'inventario', $pdo->lastInsertId(), "Item de inventario agregado: $item");
 }
 
-function updateInventarioItem($id, $item, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $proveedor)
+function updateInventarioItem($id, $item, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $proveedor, $codigo_barras = '', $categoria = 'General', $precio_venta = 0)
 {
     global $pdo;
-    $stmt = $pdo->prepare("UPDATE inventario SET item = ?, cantidad = ?, cantidad_minima = ?, cantidad_maxima = ?, precio_costo = ?, proveedor = ? WHERE id = ?");
-    $stmt->execute([$item, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $proveedor, $id]);
+    $stmt = $pdo->prepare("UPDATE inventario SET item = ?, codigo_barras = ?, categoria = ?, cantidad = ?, cantidad_minima = ?, cantidad_maxima = ?, precio_costo = ?, precio_venta = ?, proveedor = ? WHERE id = ?");
+    $stmt->execute([$item, $codigo_barras ?: null, $categoria, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $precio_venta, $proveedor, $id]);
     registrarAuditoria($_SESSION['user']['id'] ?? null, 'UPDATE', 'inventario', $id, "Item de inventario actualizado: $item");
 }
 
@@ -426,7 +528,7 @@ function getVentas()
 function getPedidosParaCocina()
 {
     global $pdo;
-    $stmt = $pdo->prepare("SELECT v.*, e.nombre AS mesero_nombre FROM ventas v LEFT JOIN empleados e ON v.mesero_id = e.id WHERE v.suspendida = 0 ORDER BY v.fecha DESC");
+    $stmt = $pdo->prepare("SELECT v.*, e.nombre AS mesero_nombre FROM ventas v LEFT JOIN empleados e ON v.mesero_id = e.id WHERE v.suspendida = 0 AND v.estado_cocina IN ('pendiente', 'preparando', 'lista') ORDER BY v.fecha ASC");
     $stmt->execute();
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
@@ -435,8 +537,9 @@ function addVenta($mesero_id, $mesa, $orden, $suspendida = false, $tipo_pago = n
 {
     global $pdo;
     $orden_json = json_encode($orden);
-    $stmt = $pdo->prepare("INSERT INTO ventas (mesero_id, mesa, orden, suspendida, tipo_pago, propina, monto_pagado, descuento, impuesto) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-    $stmt->execute([$mesero_id, $mesa, $orden_json, $suspendida, $tipo_pago, $propina, $monto_pagado, $descuento, $impuesto]);
+    $estadoCocina = $suspendida ? 'no_enviada' : 'pendiente';
+    $stmt = $pdo->prepare("INSERT INTO ventas (mesero_id, mesa, orden, suspendida, tipo_pago, propina, monto_pagado, descuento, impuesto, estado_cocina, cocina_actualizada) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())");
+    $stmt->execute([$mesero_id, $mesa, $orden_json, $suspendida, $tipo_pago, $propina, $monto_pagado, $descuento, $impuesto, $estadoCocina]);
     $ventaId = $pdo->lastInsertId();
     // Auditoría
     registrarAuditoria($_SESSION['user']['id'] ?? null, 'CREATE', 'venta', $ventaId, "Venta " . ($suspendida ? "suspendida" : "completada"));
@@ -501,7 +604,7 @@ function completarVenta($id, $tipo_pago, $propina = 0, $monto_pagado = 0, $descu
     $monto_pagado = max(0, floatval($monto_pagado));
     $descuento = max(0, floatval($descuento));
     $impuesto = max(0, floatval($impuesto));
-    $stmt = $pdo->prepare("UPDATE ventas SET suspendida = 0, tipo_pago = ?, propina = ?, monto_pagado = ?, descuento = ?, impuesto = ? WHERE id = ?");
+    $stmt = $pdo->prepare("UPDATE ventas SET suspendida = 0, tipo_pago = ?, propina = ?, monto_pagado = ?, descuento = ?, impuesto = ?, estado_cocina = 'pendiente', cocina_actualizada = NOW() WHERE id = ?");
     $stmt->execute([$tipo_pago, $propina, $monto_pagado, $descuento, $impuesto, $id]);
 }
 

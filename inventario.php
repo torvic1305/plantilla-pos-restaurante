@@ -11,38 +11,50 @@ $canEditInventory = !empty($_SESSION['user']['permisos']['inventario_editar']);
 
 $message = '';
 $editItem = null;
+$search = isset($_GET['q']) && is_string($_GET['q']) ? sanitizeString($_GET['q'], 100) : '';
+$searchField = isset($_GET['campo']) && is_string($_GET['campo']) ? $_GET['campo'] : 'all';
+$allowedSearchFields = ['all', 'item', 'codigo_barras', 'categoria', 'proveedor'];
+if (!in_array($searchField, $allowedSearchFields, true)) {
+    $searchField = 'all';
+}
+$categoryFilter = isset($_GET['categoria']) && is_string($_GET['categoria'])
+    ? sanitizeString($_GET['categoria'], 120)
+    : '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     requirePermission('inventario_editar');
     try {
-        if (!isset($_POST['csrf_token']) || !validateCsrfToken($_POST['csrf_token'])) {
+        if (!is_string($_POST['csrf_token'] ?? null) || !validateCsrfToken($_POST['csrf_token'])) {
             throw new Exception('Token de seguridad inválido');
         }
 
         $action = $_POST['action'] ?? 'add';
         $item = sanitizeString($_POST['item'] ?? '', 100);
-        $cantidad = max(0, intval($_POST['cantidad'] ?? 0));
-        $cantidad_minima = max(0, intval($_POST['cantidad_minima'] ?? 0));
-        $cantidad_maxima = max(0, intval($_POST['cantidad_maxima'] ?? 0));
+        $codigo_barras = sanitizeString($_POST['codigo_barras'] ?? '', 100);
+        $categoria = sanitizeString($_POST['categoria'] ?? 'General', 120);
+        $cantidad = validateInteger($_POST['cantidad'] ?? 0, 0, 100000000);
+        $cantidad_minima = validateInteger($_POST['cantidad_minima'] ?? 0, 0, 100000000);
+        $cantidad_maxima = validateInteger($_POST['cantidad_maxima'] ?? 0, 0, 100000000);
         $precio_costo = validateDecimal($_POST['precio_costo'] ?? 0, 0, 1000000);
+        $precio_venta = validateDecimal($_POST['precio_venta'] ?? 0, 0, 1000000);
         $proveedor = sanitizeString($_POST['proveedor'] ?? '', 100);
-        $id = validateInteger($_POST['id'] ?? 0, 0);
+        $id = validateInteger($_POST['id'] ?? 0, 0, PHP_INT_MAX);
 
         if ($action === 'save') {
-            if (empty($item)) {
-                throw new Exception('Nombre de artículo es requerido');
+            if ($item === '' || $categoria === '') {
+                throw new Exception('El nombre y la categoría del artículo son obligatorios.');
             }
-            if ($precio_costo === null) {
-                throw new Exception('Precio de costo inválido');
+            if ($cantidad === null || $cantidad_minima === null || $cantidad_maxima === null) {
+                throw new Exception('Las cantidades deben ser números enteros iguales o mayores a cero.');
             }
-            if ($cantidad_minima < 0 || $cantidad < 0 || $cantidad_maxima < 0) {
-                throw new Exception('Las cantidades no pueden ser negativas');
+            if ($precio_costo === null || $precio_venta === null) {
+                throw new Exception('Revisa los precios de costo y venta.');
             }
             if ($id > 0) {
-                updateInventarioItem($id, $item, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $proveedor);
+                updateInventarioItem($id, $item, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $proveedor, $codigo_barras, $categoria, $precio_venta);
                 $message = 'Item actualizado correctamente.';
             } else {
-                addInventarioItem($item, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $proveedor);
+                addInventarioItem($item, $cantidad, $cantidad_minima, $cantidad_maxima, $precio_costo, $proveedor, $codigo_barras, $categoria, $precio_venta);
                 $message = 'Item agregado correctamente.';
             }
             registrarAuditoria($_SESSION['user']['id'], 'GUARDAR_INVENTARIO', 'INVENTARIO', $id > 0 ? $id : null, $item);
@@ -50,6 +62,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             deleteInventarioItem($id);
             $message = 'Item eliminado correctamente.';
             registrarAuditoria($_SESSION['user']['id'], 'ELIMINAR_INVENTARIO', 'INVENTARIO', $id, 'Item eliminado');
+        } else {
+            throw new Exception('La acción de inventario no es válida.');
         }
 
         header('Location: inventario.php?success=1');
@@ -60,11 +74,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 if (isset($_GET['edit'])) {
-    $editItem = getInventarioItemById(intval($_GET['edit']));
+    $editId = validateInteger($_GET['edit'], 1, PHP_INT_MAX);
+    if ($editId !== null) {
+        $editItem = getInventarioItemById($editId);
+    }
 }
 
-$inventario = getInventario();
+$inventario = getInventario($search, $searchField, $categoryFilter);
+$categories = getCategoriasInventario();
 $lowStockItems = getInventarioBajoStock();
+$showForm = $editItem !== null || isset($_GET['new']) || $message !== '';
+$success = ($_GET['success'] ?? '') === '1';
+$escape = static fn($value) => htmlspecialchars((string) $value, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+$permissions = $_SESSION['user']['permisos'] ?? [];
+$navigation = [
+    ['Panel', 'dashboard.php', '⌂', true],
+    ['Punto de Venta', 'pos.php', '▣', $permissions['pos'] ?? false],
+    ['Menú', 'menu.php', '☷', $permissions['menu_ver'] ?? false],
+    ['Clientes', 'clientes.php', '♙', $permissions['clientes_ver'] ?? false],
+    ['Inventario', 'inventario.php', '▤', true],
+    ['Empleados', 'empleados.php', '♧', $permissions['empleados'] ?? false],
+    ['Informes', 'informes.php', '▥', $permissions['informes'] ?? false],
+    ['Propinas', 'propinas.php', '$', $permissions['propinas'] ?? false],
+    ['Merma', 'merma.php', '−', $permissions['mermas'] ?? false],
+    ['Cocina', 'cocina.php', '♨', $permissions['cocina'] ?? false],
+    ['Cierre de Caja', 'cierre_caja.php', '▣', $permissions['cierre_caja'] ?? false],
+    ['Configuración', 'config.php', '⚙', $permissions['config'] ?? false],
+    ['Cerrar Sesión', 'logout.php', '↪', true],
+];
+$searchLabels = [
+    'all' => 'Todo',
+    'item' => 'Nombre',
+    'codigo_barras' => 'Código de barras',
+    'categoria' => 'Categoría',
+    'proveedor' => 'Proveedor',
+];
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -76,127 +120,180 @@ $lowStockItems = getInventarioBajoStock();
     <link rel="stylesheet" href="style.php">
 </head>
 
-<body>
-    <header>
-        <h1>Inventario</h1>
-        <a href="dashboard.php">Volver</a>
-    </header>
-    <main>
-        <?php if ($message): ?>
-            <div
-                style="background: #e7f7e7; color: #155724; border: 1px solid #c3e6cb; padding: 12px; border-radius: 6px; margin-bottom: 18px;">
-                <?php echo htmlspecialchars($message); ?>
+<body class="app-layout inventory-page">
+    <aside class="sidebar">
+        <div class="sidebar-brand">RESTAURANTE POS</div>
+        <nav aria-label="Navegación principal">
+            <?php foreach ($navigation as [$label, $url, $icon, $visible]): ?>
+                <?php if ($visible): ?>
+                    <a href="<?= $escape($url) ?>" class="<?= $url === 'inventario.php' ? 'active' : '' ?>">
+                        <span class="sidebar-icon" aria-hidden="true"><?= $escape($icon) ?></span>
+                        <span><?= $escape($label) ?></span>
+                    </a>
+                <?php endif; ?>
+            <?php endforeach; ?>
+        </nav>
+    </aside>
+    <div class="app-main">
+        <header class="topbar">
+            <span class="breadcrumb">Restaurante POS <span aria-hidden="true">/</span> Inventario</span>
+            <span class="user-name"><?= $escape($_SESSION['user']['nombre'] ?? '') ?></span>
+        </header>
+        <main class="inventory-content">
+        <div class="inventory-toolbar">
+            <form method="get" class="inventory-search">
+                <label class="visually-hidden" for="inventory-search">Buscar inventario</label>
+                <input id="inventory-search" type="search" name="q" value="<?= $escape($search) ?>" placeholder="Buscar inventario">
+                <label>Campo:
+                    <select name="campo">
+                        <?php foreach ($searchLabels as $value => $label): ?>
+                            <option value="<?= $escape($value) ?>" <?= $searchField === $value ? 'selected' : '' ?>><?= $escape($label) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+                <label>Categoría:
+                    <select name="categoria">
+                        <option value="">Todas</option>
+                        <?php foreach ($categories as $category): ?>
+                            <option value="<?= $escape($category) ?>" <?= $categoryFilter === $category ? 'selected' : '' ?>><?= $escape($category) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+                <button type="submit">Buscar</button>
+            </form>
+            <div class="inventory-toolbar-actions">
+                <?php if ($canEditInventory): ?>
+                    <a class="inventory-new-button" href="inventario.php?new=1#inventory-form">+ Nuevo artículo</a>
+                <?php endif; ?>
+                <a class="button-secondary inventory-dashboard-link" href="dashboard.php" aria-label="Volver al panel">···</a>
             </div>
+        </div>
+
+        <?php if ($success): ?>
+            <div class="settings-message success" role="status">Cambios de inventario guardados correctamente.</div>
+        <?php endif; ?>
+        <?php if ($message): ?>
+            <div class="settings-message error" role="alert"><?= $escape($message) ?></div>
         <?php endif; ?>
 
-        <?php if (!empty($lowStockItems)): ?>
-            <?php if ($canEditInventory): ?>
-            <section
-                style="margin-bottom: 20px; padding: 15px; background: #fff4e5; border: 1px solid #ffd8a8; border-radius: 8px;">
-                <h2>Artículos con stock bajo</h2>
-                <ul>
-                    <?php foreach ($lowStockItems as $item): ?>
-                        <li><?php echo htmlspecialchars($item['item']); ?> — <?php echo intval($item['cantidad']); ?> en stock,
-                            mínimo <?php echo intval($item['cantidad_minima']); ?></li>
-                    <?php endforeach; ?>
-                </ul>
-            </section>
+        <section class="inventory-list-card">
+            <div class="inventory-list-heading">
+                <h2>Artículos <span class="inventory-count"><?= count($inventario) ?></span></h2>
+                <div class="inventory-heading-meta">
+                    <?php if (!empty($lowStockItems)): ?>
+                        <span class="inventory-low-stock"><?= count($lowStockItems) ?> con stock bajo</span>
+                    <?php endif; ?>
+                    <span class="inventory-settings-icon" aria-hidden="true">⚙</span>
+                </div>
+            </div>
+            <?php if (empty($inventario)): ?>
+                <p class="inventory-empty">
+                    <?= $search !== '' || $categoryFilter !== '' ? 'No se encontraron artículos con esos filtros.' : 'No hay artículos registrados en el inventario.' ?>
+                </p>
+            <?php else: ?>
+                <div class="inventory-table-scroll">
+                    <table class="inventory-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">ID</th>
+                                <th scope="col">Código de barras</th>
+                                <th scope="col">Nombre</th>
+                                <th scope="col">Categoría</th>
+                                <th scope="col" class="numeric-cell">Costo</th>
+                                <th scope="col" class="numeric-cell">Precio de venta</th>
+                                <th scope="col" class="numeric-cell">Cantidad</th>
+                                <?php if ($canEditInventory): ?><th scope="col">Acciones</th><?php endif; ?>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($inventario as $item): ?>
+                                <?php $isLow = (int) $item['cantidad'] <= (int) $item['cantidad_minima']; ?>
+                                <tr>
+                                    <td><?= (int) $item['id'] ?></td>
+                                    <td><?= $escape($item['codigo_barras'] ?? '') ?: '—' ?></td>
+                                    <td><strong><?= $escape($item['item']) ?></strong></td>
+                                    <td><?= $escape($item['categoria'] ?? 'General') ?></td>
+                                    <td class="numeric-cell">$<?= number_format((float) ($item['precio_costo'] ?? 0), 2) ?></td>
+                                    <td class="numeric-cell">$<?= number_format((float) ($item['precio_venta'] ?? 0), 2) ?></td>
+                                    <td class="numeric-cell <?= $isLow ? 'quantity-low' : '' ?>">
+                                        <?= (int) $item['cantidad'] ?>
+                                        <?php if ($isLow): ?><span class="stock-status">Bajo</span><?php endif; ?>
+                                    </td>
+                                    <?php if ($canEditInventory): ?>
+                                        <td class="inventory-actions">
+                                            <a href="inventario.php?edit=<?= (int) $item['id'] ?>#inventory-form">Editar</a>
+                                            <form method="post" onsubmit="return confirm('¿Eliminar este artículo de inventario?');">
+                                                <input type="hidden" name="csrf_token" value="<?= $escape(getCsrfToken()) ?>">
+                                                <input type="hidden" name="action" value="delete">
+                                                <input type="hidden" name="id" value="<?= (int) $item['id'] ?>">
+                                                <button type="submit" class="inventory-delete">Eliminar</button>
+                                            </form>
+                                        </td>
+                                    <?php endif; ?>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
             <?php endif; ?>
-        <?php endif; ?>
+            <?php if (!empty($lowStockItems) && $canEditInventory): ?>
+                <details class="inventory-alert-details">
+                    <summary>Ver artículos que requieren reposición</summary>
+                    <ul>
+                        <?php foreach ($lowStockItems as $lowItem): ?>
+                            <li><?= $escape($lowItem['item']) ?> — <?= (int) $lowItem['cantidad'] ?> disponibles; mínimo <?= (int) $lowItem['cantidad_minima'] ?></li>
+                        <?php endforeach; ?>
+                    </ul>
+                </details>
+            <?php endif; ?>
+        </section>
 
-        <section
-            style="margin-bottom: 30px; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
-            <h2><?php echo $editItem ? 'Editar artículo' : 'Agregar nuevo artículo'; ?></h2>
-            <form method="post">
+        <?php if ($showForm && $canEditInventory): ?>
+        <section class="inventory-form-card" id="inventory-form">
+            <h2><?= $editItem ? 'Editar artículo' : 'Nuevo artículo' ?></h2>
+            <form method="post" class="inventory-item-form">
                 <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(getCsrfToken()) ?>">
                 <input type="hidden" name="action" value="save">
-                <input type="hidden" name="id" value="<?php echo intval($editItem['id'] ?? 0); ?>">
-                <label>Nombre del artículo:<br>
-                    <input type="text" name="item" required style="width:100%;"
-                        value="<?php echo htmlspecialchars($editItem['item'] ?? ''); ?>">
-                </label><br><br>
-                <label>Cantidad:<br>
-                    <input type="number" name="cantidad" min="0" style="width:100%;"
-                        value="<?php echo intval($editItem['cantidad'] ?? 0); ?>">
-                </label><br><br>
-                <label>Cantidad mínima de alerta:<br>
-                    <input type="number" name="cantidad_minima" min="0" style="width:100%;"
-                        value="<?php echo intval($editItem['cantidad_minima'] ?? 0); ?>">
-                </label><br><br>
-                <label>Cantidad máxima sugerida:<br>
-                    <input type="number" name="cantidad_maxima" min="0" style="width:100%;"
-                        value="<?php echo intval($editItem['cantidad_maxima'] ?? 0); ?>">
-                </label><br><br>
-                <label>Precio de costo:<br>
-                    <input type="number" name="precio_costo" min="0" step="0.01" style="width:100%;"
-                        value="<?php echo htmlspecialchars($editItem['precio_costo'] ?? ''); ?>">
-                </label><br><br>
-                <label>Proveedor:<br>
-                    <input type="text" name="proveedor" style="width:100%;"
-                        value="<?php echo htmlspecialchars($editItem['proveedor'] ?? ''); ?>">
-                </label><br><br>
-                <button type="submit"
-                    style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer;">
-                    <?php echo $editItem ? 'Actualizar artículo' : 'Agregar artículo'; ?></button>
-                <?php if ($editItem): ?>
-                    <a href="inventario.php" style="margin-left: 12px; color: #555;">Cancelar</a>
-                <?php endif; ?>
+                <input type="hidden" name="id" value="<?= (int) ($editItem['id'] ?? 0) ?>">
+                <label>Nombre del artículo
+                    <input type="text" name="item" maxlength="100" required value="<?= $escape($editItem['item'] ?? '') ?>">
+                </label>
+                <label>Código de barras
+                    <input type="text" name="codigo_barras" maxlength="100" value="<?= $escape($editItem['codigo_barras'] ?? '') ?>">
+                </label>
+                <label>Categoría
+                    <input type="text" name="categoria" list="inventory-categories" maxlength="120" required value="<?= $escape($editItem['categoria'] ?? 'General') ?>">
+                    <datalist id="inventory-categories">
+                        <?php foreach ($categories as $category): ?><option value="<?= $escape($category) ?>"><?php endforeach; ?>
+                    </datalist>
+                </label>
+                <label>Cantidad disponible
+                    <input type="number" name="cantidad" min="0" step="1" required value="<?= (int) ($editItem['cantidad'] ?? 0) ?>">
+                </label>
+                <label>Cantidad mínima
+                    <input type="number" name="cantidad_minima" min="0" step="1" required value="<?= (int) ($editItem['cantidad_minima'] ?? 0) ?>">
+                </label>
+                <label>Cantidad máxima sugerida
+                    <input type="number" name="cantidad_maxima" min="0" step="1" required value="<?= (int) ($editItem['cantidad_maxima'] ?? 0) ?>">
+                </label>
+                <label>Precio de costo
+                    <input type="number" name="precio_costo" min="0" max="1000000" step="0.01" required value="<?= $escape($editItem['precio_costo'] ?? '0') ?>">
+                </label>
+                <label>Precio de venta
+                    <input type="number" name="precio_venta" min="0" max="1000000" step="0.01" required value="<?= $escape($editItem['precio_venta'] ?? '0') ?>">
+                </label>
+                <label>Proveedor
+                    <input type="text" name="proveedor" maxlength="100" value="<?= $escape($editItem['proveedor'] ?? '') ?>">
+                </label>
+                <div class="inventory-form-actions">
+                    <button type="submit"><?= $editItem ? 'Guardar artículo' : 'Crear artículo' ?></button>
+                    <a href="inventario.php">Cancelar</a>
+                </div>
             </form>
         </section>
-
-        <section>
-            <h2>Lista de inventario</h2>
-            <?php if (empty($inventario)): ?>
-                <p>No hay artículos registrados en el inventario.</p>
-            <?php else: ?>
-                <table style="width:100%; border-collapse: collapse;">
-                    <thead>
-                        <tr style="background: #f2f2f2;">
-                            <th style="padding: 10px; text-align:left;">Artículo</th>
-                            <th style="padding: 10px; text-align:right;">Cantidad</th>
-                            <th style="padding: 10px; text-align:right;">Mínimo</th>
-                            <th style="padding: 10px; text-align:right;">Máximo</th>
-                            <th style="padding: 10px; text-align:right;">Costo</th>
-                            <th style="padding: 10px; text-align:left;">Proveedor</th>
-                            <?php if ($canEditInventory): ?>
-                                <th style="padding: 10px; text-align:center;">Acciones</th>
-                            <?php endif; ?>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($inventario as $item): ?>
-                            <tr style="border-bottom: 1px solid #ddd;">
-                                <td style="padding: 10px;"><?php echo htmlspecialchars($item['item']); ?></td>
-                                <td style="padding: 10px; text-align:right;"><?php echo intval($item['cantidad']); ?></td>
-                                <td style="padding: 10px; text-align:right;"><?php echo intval($item['cantidad_minima']); ?>
-                                </td>
-                                <td style="padding: 10px; text-align:right;"><?php echo intval($item['cantidad_maxima']); ?>
-                                </td>
-                                <td style="padding: 10px; text-align:right;">
-                                    $<?php echo number_format($item['precio_costo'] ?? 0, 2); ?></td>
-                                <td style="padding: 10px; text-align:left;"><?php echo htmlspecialchars($item['proveedor']); ?>
-                                </td>
-                                <?php if ($canEditInventory): ?>
-                                <td style="padding: 10px; text-align:center;">
-                                    <a href="inventario.php?edit=<?php echo intval($item['id']); ?>"
-                                        style="margin-right: 8px;">Editar</a>
-                                    <form method="post" style="display:inline;"
-                                        onsubmit="return confirm('¿Eliminar este artículo de inventario?');">
-                                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(getCsrfToken()) ?>">
-                                        <input type="hidden" name="action" value="delete">
-                                        <input type="hidden" name="id" value="<?php echo intval($item['id']); ?>">
-                                        <button type="submit"
-                                            style="background: transparent; border: none; color: #c00; cursor: pointer;">Eliminar</button>
-                                    </form>
-                                </td>
-                                <?php endif; ?>
-                            </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            <?php endif; ?>
-        </section>
-    </main>
+        <?php endif; ?>
+        </main>
+    </div>
     <script src="2.js"></script>
 </body>
 

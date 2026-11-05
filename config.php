@@ -4,6 +4,10 @@ include 'security.php';
 
 requirePermission('config');
 $config = getAppConfig();
+$canManageEmployees = !empty($_SESSION['user']['permisos']['empleados']);
+$managedEmployees = $canManageEmployees
+    ? array_values(array_filter(getEmpleados(), static fn($employee) => $employee['usuario'] !== 'super'))
+    : [];
 $error_msg = '';
 $success_msg = '';
 
@@ -164,6 +168,23 @@ if (!in_array($config['fuente'], $fontChoices, true)) {
             <div class="settings-message success" role="status"><?= $escape($success_msg) ?></div>
         <?php endif; ?>
 
+        <?php if ($canManageEmployees): ?>
+            <section class="settings-section settings-employee-panel">
+                <div class="settings-section-heading">
+                    <span class="settings-section-icon" aria-hidden="true">♧</span>
+                    <div>
+                        <h3>Empleados y permisos</h3>
+                        <p>Administra las cuentas del personal, sus roles y los accesos por área desde el panel de empleados.</p>
+                    </div>
+                </div>
+                <div class="employee-panel-summary">
+                    <strong><?= count($managedEmployees) ?></strong>
+                    <span>empleados configurables</span>
+                    <a class="dashboard-primary-action" href="empleados.php">Administrar empleados y permisos</a>
+                </div>
+            </section>
+        <?php endif; ?>
+
         <form method="post" class="settings-form">
             <input type="hidden" name="csrf_token" value="<?= $escape(getCsrfToken()) ?>">
 
@@ -255,7 +276,7 @@ if (!in_array($config['fuente'], $fontChoices, true)) {
             <section class="settings-section">
                 <div class="settings-section-heading">
                     <span class="settings-section-icon" aria-hidden="true">▤</span>
-                    <div><h3>Impresoras y comandas</h3><p>Configura impresoras térmicas ESC/POS por red (TCP). Deja una IP vacía para usar el diálogo del navegador. Guarda los cambios antes de probar.</p></div>
+                    <div><h3>Impresoras y comandas</h3><p>Para imprimir comandas más rápido y sin el diálogo del navegador, configura la IP privada y el puerto TCP de cada impresora ESC/POS. Deja una IP vacía para imprimir manualmente desde el navegador. Guarda los cambios antes de probar.</p></div>
                 </div>
                 <div class="settings-fields">
                     <?php foreach (['recibo' => 'Recibos de cliente', 'cocina' => 'Comandas de cocina', 'barra' => 'Comandas de barra'] as $station => $label): ?>

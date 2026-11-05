@@ -50,19 +50,10 @@ try {
         $orden = [];
     }
 
-    $nuevos_items = isset($data['nuevos_items']) && is_array($data['nuevos_items']) ? $data['nuevos_items'] : [];
-    $orden_actualizada = $orden;
-    foreach ($nuevos_items as $item) {
-        if (!isset($item['id'], $item['nombre'], $item['precio'])) {
-            continue;
-        }
-        $orden_actualizada[] = [
-            'id' => intval($item['id']),
-            'nombre' => sanitizeString($item['nombre'], 100),
-            'precio' => validateDecimal($item['precio'], 0, 999999),
-            'cantidad' => max(1, intval($item['cantidad'] ?? 1))
-        ];
-    }
+    $nuevos_items = isset($data['nuevos_items']) && is_array($data['nuevos_items'])
+        ? normalizeMenuOrderItems($data['nuevos_items'])
+        : [];
+    $orden_actualizada = array_merge($orden, $nuevos_items);
 
     $propina = validateDecimal($data['propina'] ?? 0, 0, 10000);
     if ($propina === null) {

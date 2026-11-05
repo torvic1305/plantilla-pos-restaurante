@@ -9,7 +9,7 @@
         "Transferencia"
     ],
     "metodo_pago_default": "Efectivo",
-    "mesas": 15,
+    "mesas": 8,
     "impuesto": 16,
     "cash_alert_threshold": 0,
     "pos_focus_search": true,

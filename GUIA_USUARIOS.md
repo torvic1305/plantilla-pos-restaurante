@@ -24,7 +24,7 @@
 La impresión ESC/POS por red requiere que el servidor donde se ejecuta PHP pueda conectarse por TCP a cada impresora. Usa impresoras ESC/POS compatibles con impresión directa de red; esta opción no descubre impresoras automáticamente.
 
 ### 3. Crear Empleados
-1. Ve a **Empleados**
+1. Ve a **Configuración** → **Empleados y permisos** → **Administrar empleados y permisos**
 2. Haz clic en **Agregar Empleado**
 3. Completa datos: nombre, usuario, contraseña, rol
 4. Roles disponibles:
@@ -180,6 +180,13 @@ Ve a **Reportes Avanzados** para:
    - Cantidad
    - Razón (ej: Rotura, Caducidad, etc)
 4. Se registra para auditoría
+
+### Administrar Inventario
+1. Abre **Inventario** desde el menú lateral.
+2. Busca por nombre, código de barras, categoría o proveedor, y combina la búsqueda con el filtro de categoría.
+3. Usa **Nuevo artículo** para registrar código, categoría, existencias, mínimo/máximo, costo, precio de venta y proveedor.
+4. Los artículos por debajo de su mínimo se identifican en la tabla y en la sección de reposición.
+5. Si se actualiza una instalación existente, respalda la base de datos y ejecuta `setup.php` para agregar los nuevos campos del inventario.
 
 ### Gestionar Empleados
 1. Ve a **Empleados**

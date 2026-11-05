@@ -61,6 +61,8 @@ try {
         suspendida BOOLEAN DEFAULT FALSE,
         tipo_pago VARCHAR(100) NULL,
         propina DECIMAL(10,2) DEFAULT 0,
+        estado_cocina VARCHAR(20) NOT NULL DEFAULT 'entregada',
+        cocina_actualizada DATETIME NULL,
         fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (mesero_id) REFERENCES empleados(id)
     )");
@@ -69,6 +71,16 @@ try {
     ensureColumn($pdo, 'ventas', 'monto_pagado', 'DECIMAL(10,2) DEFAULT 0');
     ensureColumn($pdo, 'ventas', 'descuento', 'DECIMAL(10,2) DEFAULT 0');
     ensureColumn($pdo, 'ventas', 'impuesto', 'DECIMAL(10,2) DEFAULT 0');
+    ensureColumn($pdo, 'ventas', 'estado_cocina', "VARCHAR(20) NOT NULL DEFAULT 'entregada'");
+    ensureColumn($pdo, 'ventas', 'cocina_actualizada', 'DATETIME NULL');
+    $stmt = $pdo->prepare(
+        'SELECT COUNT(*) FROM information_schema.STATISTICS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ?'
+    );
+    $stmt->execute(['ventas', 'idx_ventas_cocina_queue']);
+    if ((int) $stmt->fetchColumn() === 0) {
+        $pdo->exec('CREATE INDEX idx_ventas_cocina_queue ON ventas (suspendida, estado_cocina, fecha)');
+    }
 
     // Tabla cierres de caja
     $pdo->exec("CREATE TABLE IF NOT EXISTS cierres_caja (
@@ -104,12 +116,34 @@ try {
     $pdo->exec("CREATE TABLE IF NOT EXISTS inventario (
         id INT AUTO_INCREMENT PRIMARY KEY,
         item VARCHAR(255),
-        cantidad INT DEFAULT 0,
-        cantidad_minima INT DEFAULT 0,
-        cantidad_maxima INT DEFAULT 0,
+        codigo_barras VARCHAR(100) NULL,
+        categoria VARCHAR(120) NOT NULL DEFAULT 'General',
+        cantidad DECIMAL(12,3) DEFAULT 0,
+        cantidad_minima DECIMAL(12,3) DEFAULT 0,
+        cantidad_maxima DECIMAL(12,3) DEFAULT 0,
         precio_costo DECIMAL(10,2),
+        precio_venta DECIMAL(10,2) DEFAULT 0,
         proveedor VARCHAR(255),
+        unidad VARCHAR(20) NOT NULL DEFAULT 'pieza',
         ultima_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )");
+    ensureColumn($pdo, 'inventario', 'codigo_barras', 'VARCHAR(100) NULL');
+    ensureColumn($pdo, 'inventario', 'categoria', "VARCHAR(120) NOT NULL DEFAULT 'General'");
+    ensureColumn($pdo, 'inventario', 'precio_venta', 'DECIMAL(10,2) DEFAULT 0');
+    ensureColumn($pdo, 'inventario', 'unidad', "VARCHAR(20) NOT NULL DEFAULT 'pieza'");
+    $pdo->exec("ALTER TABLE inventario
+        MODIFY cantidad DECIMAL(12,3) DEFAULT 0,
+        MODIFY cantidad_minima DECIMAL(12,3) DEFAULT 0,
+        MODIFY cantidad_maxima DECIMAL(12,3) DEFAULT 0");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS menu_recetas (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        menu_id INT NOT NULL,
+        inventario_id INT NOT NULL,
+        cantidad DECIMAL(12,3) NOT NULL,
+        UNIQUE KEY uq_menu_receta_ingrediente (menu_id, inventario_id),
+        CONSTRAINT fk_menu_recetas_menu FOREIGN KEY (menu_id) REFERENCES menu(id) ON DELETE CASCADE,
+        CONSTRAINT fk_menu_recetas_inventario FOREIGN KEY (inventario_id) REFERENCES inventario(id) ON DELETE RESTRICT
     )");
 
     // Tabla clientes
@@ -155,9 +189,11 @@ try {
     $stmt->execute(['Mesero 1', 'mesero1', password_hash('mesero123', PASSWORD_DEFAULT), 'mesero']);
     $stmt->execute(['Cocinero 1', 'cocinero1', password_hash('cocinero123', PASSWORD_DEFAULT), 'cocinero']);
 
-    $stmt = $pdo->prepare("INSERT IGNORE INTO menu (nombre, precio, categoria) VALUES (?, ?, ?)");
-    $stmt->execute(['Pizza', 10.00, 'Platos principales']);
-    $stmt->execute(['Ensalada', 5.00, 'Entradas']);
+    $pdo->exec("UPDATE empleados SET permisos = JSON_SET(COALESCE(permisos, JSON_OBJECT()), '$.empleados', TRUE) WHERE usuario = 'admin'");
+
+    $stmt = $pdo->prepare("INSERT INTO menu (nombre, precio, categoria) SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM menu WHERE nombre = ? AND categoria = ?)");
+    $stmt->execute(['Pizza', 10.00, 'Platos principales', 'Pizza', 'Platos principales']);
+    $stmt->execute(['Ensalada', 5.00, 'Entradas', 'Ensalada', 'Entradas']);
 
     $message = 'Base de datos configurada correctamente.';
 } catch (PDOException $e) {
