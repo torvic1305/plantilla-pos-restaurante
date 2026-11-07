@@ -441,8 +441,8 @@ if (!in_array($config['fuente'], $fontChoices, true)) {
                     <div><h3>Apariencia</h3><p>Personaliza los colores y tipografía del sistema.</p></div>
                 </div>
                 <div class="theme-preset-row">
-                    <span><strong>Tema predeterminado</strong><small>Aplica una paleta profesional negro y dorado.</small></span>
-                    <button type="button" class="button-secondary" id="black-gold-preset">Aplicar negro y dorado</button>
+                    <span><strong>Tema predeterminado</strong><small>Aplica una paleta de colores negros y dorados.</small></span>
+                    <button type="button" class="button-secondary" id="black-gold-preset">Volver a predeterminado</button>
                 </div>
                 <div class="settings-fields settings-colors">
                     <label>Fondo de páginas
