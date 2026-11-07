@@ -166,7 +166,7 @@ $clientes = getClientes();
             <?php endif; ?>
         </section>
     </main>
-    <script src="2.js"></script>
+    <script src="utilidades.js"></script>
 </body>
 
 </html>

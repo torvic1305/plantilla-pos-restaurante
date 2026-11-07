@@ -48,7 +48,7 @@ Las ventas con formas de pago personalizadas también aparecen con su propio tot
 ### Tomar un Pedido (Mesero)
 1. Entra en **Punto de Venta**
 2. **Selecciona tu nombre** en "Mesero"
-3. **Elige una mesa** en el panel de mesas
+3. **Elige una mesa** en el panel "Mesa y mesero", situado junto al menú en pantallas amplias
 4. **Agrega productos** haciendo clic en el menú
 5. Para cada producto puedes:
    - Hacer clic en **Nota** para agregar instrucciones especiales
@@ -69,10 +69,11 @@ Las ventas con formas de pago personalizadas también aparecen con su propio tot
 1. Si el cliente aún no paga, haz clic en **Suspender Venta**
 2. Se guarda la orden para continuar después
 3. Se imprime automáticamente la comanda para cocina
-4. En **Informes** → **Ventas Suspendidas** puedes:
-   - Buscar la venta por ID, mesa o mesero
-   - Continuar agregando items
-   - Completar y cobrar
+4. En el encabezado del POS, haz clic en **Ventas en espera**
+5. Busca la venta por folio, mesa o mesero. **Editar y cobrar** permite cambiar cantidades, notas, quitar o agregar productos, guardar los cambios y completar el cobro.
+
+### Pedidos de Reparto
+La campana del encabezado abre **Notificaciones de pedidos**. La pantalla mostrará los detalles cuando exista una integración autorizada; por ahora, no recibe ni guarda pedidos de Uber Eats, DiDi Food o Rappi. Para habilitarla, el restaurante necesita aprobación y credenciales oficiales de cada plataforma.
 
 ### Cobrar una Venta
 1. Asegúrate de que la orden está completa
@@ -188,13 +189,20 @@ Ve a **Reportes Avanzados** para:
 4. Los artículos por debajo de su mínimo se identifican en la tabla y en la sección de reposición.
 5. Si se actualiza una instalación existente, respalda la base de datos y ejecuta `setup.php` para agregar los nuevos campos del inventario.
 
+### Registrar Compras
+1. Abre **Compras** desde el menú lateral o desde Inventario.
+2. Indica proveedor, folio y fecha; agrega uno o más artículos con su cantidad y costo unitario.
+3. Al guardar, el sistema registra el historial, aumenta las existencias y actualiza el costo del artículo con el último costo de compra.
+4. Consulta **Historial de compras** para ver el detalle y las observaciones de cada registro.
+5. Se requiere permiso de edición de inventario para registrar compras; el historial está disponible para quienes pueden consultar inventario.
+
 ### Gestionar Empleados
-1. Ve a **Empleados**
-2. Ver lista de personal activo
-3. Desde Gerente:
-   - Agregar nuevos empleados
-   - Ver historial de accesos
-   - Asignar permisos
+1. Ve a **Empleados** para consultar las cuentas activas y sus permisos.
+2. Desde una cuenta de Gerente puedes agregar empleados y cambiar sus permisos.
+3. Usa **Suspender** para vacaciones, permisos temporales o suspensiones. El empleado no podrá iniciar sesión ni aparecer como mesero asignable; usa **Reactivar** cuando regrese.
+4. Usa **Archivar** cuando alguien deje de trabajar en el restaurante. El archivo conserva sus ventas históricas y no borra permanentemente la cuenta.
+5. Abre la pestaña **Archivados** para restaurar a una persona que regrese. La cuenta restaurada podrá iniciar sesión otra vez.
+6. La última cuenta de Gerente activa no se puede suspender ni archivar.
 
 ## Solución de Problemas
 

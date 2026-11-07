@@ -11,49 +11,153 @@ if (!isset($_SESSION['user'])) {
 }
 
 $user = $_SESSION['user'];
+$employeeState = getEstadoEmpleado((int) $user['id']);
+if (
+    !$employeeState
+    || !empty($employeeState['suspendido'])
+    || $employeeState['eliminado_en'] !== null
+) {
+    http_response_code(403);
+    exit('La cuenta de este empleado está suspendida o archivada. Contacte a un gerente.');
+}
 $permisos = getPermisos((int) $user['id']);
 $_SESSION['user']['permisos'] = $permisos;
 $hoy = date('Y-m-d');
-$desdeSemana = date('Y-m-d', strtotime('-6 days'));
 $appConfig = getAppConfig();
 $cashAlertThreshold = (float) ($appConfig['cash_alert_threshold'] ?? 0);
 
 $ventasHoy = ['ventas' => 0, 'ingresos' => 0, 'efectivo' => 0];
-$ingresosSemana = [];
 $canViewSales = !empty($permisos['informes']) || !empty($permisos['cierre_caja']);
 if ($canViewSales) {
     $manana = date('Y-m-d', strtotime($hoy . ' +1 day'));
     $stmtVentas = $pdo->prepare(
-        'SELECT * FROM ventas WHERE COALESCE(suspendida, 0) = 0 AND fecha >= ? AND fecha < ?'
+        'SELECT tipo_pago, monto_pagado, orden, descuento, impuesto
+         FROM ventas WHERE COALESCE(suspendida, 0) = 0 AND fecha >= ? AND fecha < ?'
     );
-    $stmtVentas->execute([$desdeSemana . ' 00:00:00', $manana . ' 00:00:00']);
+    $stmtVentas->execute([$hoy . ' 00:00:00', $manana . ' 00:00:00']);
     foreach ($stmtVentas->fetchAll(PDO::FETCH_ASSOC) as $venta) {
         $totalCobrado = getTotalVentaCobrado($venta);
-        $dia = date('Y-m-d', strtotime($venta['fecha']));
-        $ingresosSemana[$dia] = ($ingresosSemana[$dia] ?? 0) + $totalCobrado;
-        if ($dia === $hoy) {
-            $ventasHoy['ventas']++;
-            $ventasHoy['ingresos'] += $totalCobrado;
-            if ($venta['tipo_pago'] === 'Efectivo') {
-                $ventasHoy['efectivo'] += $totalCobrado;
-            }
+        $ventasHoy['ventas']++;
+        $ventasHoy['ingresos'] += $totalCobrado;
+        if ($venta['tipo_pago'] === 'Efectivo') {
+            $ventasHoy['efectivo'] += $totalCobrado;
+        }
+    }
+}
+
+$canViewDashboardChart = !empty($permisos['dashboard_grafica']);
+$chartPeriodOptions = [
+    'hoy' => 'Hoy',
+    'ayer' => 'Ayer',
+    'semana' => 'Esta semana',
+    'mes' => 'Este mes',
+    'este_anio' => 'Este año',
+    'anio_pasado' => 'Año pasado',
+    'rango' => 'Rango personalizado',
+];
+$chartPeriod = isset($_GET['grafica_periodo']) && is_string($_GET['grafica_periodo'])
+    ? $_GET['grafica_periodo']
+    : 'semana';
+if (!isset($chartPeriodOptions[$chartPeriod])) {
+    $chartPeriod = 'semana';
+}
+$chartRangeError = '';
+$customStartInput = isset($_GET['desde']) && is_string($_GET['desde']) ? $_GET['desde'] : '';
+$customEndInput = isset($_GET['hasta']) && is_string($_GET['hasta']) ? $_GET['hasta'] : '';
+$parseDate = static function ($value) {
+    if (!is_string($value) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
+        return null;
+    }
+    $date = DateTimeImmutable::createFromFormat('!Y-m-d', $value);
+    $errors = DateTimeImmutable::getLastErrors();
+    return $date && ($errors === false || ($errors['warning_count'] === 0 && $errors['error_count'] === 0))
+        && $date->format('Y-m-d') === $value
+        ? $date
+        : null;
+};
+$todayDate = new DateTimeImmutable($hoy);
+$chartStart = $todayDate->modify('monday this week');
+$chartEnd = $todayDate;
+if ($chartPeriod === 'hoy') {
+    $chartStart = $todayDate;
+} elseif ($chartPeriod === 'ayer') {
+    $chartStart = $todayDate->modify('-1 day');
+    $chartEnd = $chartStart;
+} elseif ($chartPeriod === 'mes') {
+    $chartStart = $todayDate->modify('first day of this month');
+} elseif ($chartPeriod === 'este_anio') {
+    $chartStart = $todayDate->setDate((int) $todayDate->format('Y'), 1, 1);
+} elseif ($chartPeriod === 'anio_pasado') {
+    $chartStart = $todayDate->modify('first day of january last year');
+    $chartEnd = $todayDate->modify('last day of december last year');
+} elseif ($chartPeriod === 'rango') {
+    $requestedStart = $parseDate($customStartInput);
+    $requestedEnd = $parseDate($customEndInput);
+    if (!$requestedStart || !$requestedEnd || $requestedStart > $requestedEnd) {
+        $chartRangeError = 'Indica fechas válidas y asegúrate de que la fecha inicial no sea posterior a la final.';
+        $chartPeriod = 'semana';
+        $chartStart = $todayDate->modify('monday this week');
+        $chartEnd = $todayDate;
+    } elseif ($requestedStart->diff($requestedEnd)->days > 3650) {
+        $chartRangeError = 'El rango personalizado no puede superar diez años.';
+        $chartPeriod = 'semana';
+        $chartStart = $todayDate->modify('monday this week');
+        $chartEnd = $todayDate;
+    } else {
+        $chartStart = $requestedStart;
+        $chartEnd = $requestedEnd;
+    }
+}
+$chartFrom = $chartStart->format('Y-m-d');
+$chartUntil = $chartEnd->format('Y-m-d');
+$chartPeriodLabel = $chartPeriodOptions[$chartPeriod] ?? $chartPeriodOptions['semana'];
+$chartBuckets = [];
+if ($canViewDashboardChart) {
+    $useMonthlyBuckets = in_array($chartPeriod, ['este_anio', 'anio_pasado'], true)
+        || ($chartPeriod === 'rango' && $chartStart->diff($chartEnd)->days > 31);
+    if ($useMonthlyBuckets) {
+        $bucketDate = $chartStart->modify('first day of this month');
+        $lastBucketDate = $chartEnd->modify('first day of this month');
+        while ($bucketDate <= $lastBucketDate) {
+            $key = $bucketDate->format('Y-m');
+            $chartBuckets[$key] = [
+                'fecha' => $key,
+                'etiqueta' => $bucketDate->format('M Y'),
+                'ingresos' => 0.0,
+            ];
+            $bucketDate = $bucketDate->modify('+1 month');
+        }
+    } else {
+        for ($bucketDate = $chartStart; $bucketDate <= $chartEnd; $bucketDate = $bucketDate->modify('+1 day')) {
+            $key = $bucketDate->format('Y-m-d');
+            $chartBuckets[$key] = [
+                'fecha' => $key,
+                'etiqueta' => $bucketDate->format('d/m'),
+                'ingresos' => 0.0,
+            ];
+        }
+    }
+
+    $chartEndExclusive = $chartEnd->modify('+1 day')->format('Y-m-d');
+    $chartSales = $pdo->prepare(
+        'SELECT fecha, tipo_pago, monto_pagado, orden, descuento, impuesto
+         FROM ventas
+         WHERE COALESCE(suspendida, 0) = 0 AND fecha >= ? AND fecha < ?
+         ORDER BY fecha'
+    );
+    $chartSales->execute([$chartFrom . ' 00:00:00', $chartEndExclusive . ' 00:00:00']);
+    foreach ($chartSales->fetchAll(PDO::FETCH_ASSOC) as $sale) {
+        $saleDate = new DateTimeImmutable($sale['fecha']);
+        $key = $useMonthlyBuckets ? $saleDate->format('Y-m') : $saleDate->format('Y-m-d');
+        if (isset($chartBuckets[$key])) {
+            $chartBuckets[$key]['ingresos'] += getTotalVentaCobrado($sale);
         }
     }
 }
 
 $stmtMenu = $pdo->query('SELECT COUNT(*) FROM menu');
 $totalProductos = (int) $stmtMenu->fetchColumn();
-$maxIngresoSemana = max(array_merge([1], array_values($ingresosSemana)));
-$diasSemana = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-$graficaSemana = [];
-for ($i = 6; $i >= 0; $i--) {
-    $dia = date('Y-m-d', strtotime("-$i days"));
-    $graficaSemana[] = [
-        'fecha' => $dia,
-        'etiqueta' => $diasSemana[(int) date('w', strtotime($dia))],
-        'ingresos' => $ingresosSemana[$dia] ?? 0,
-    ];
-}
+$maxChartIncome = max(array_merge([1], array_column($chartBuckets, 'ingresos')));
 $lowStockItems = !empty($permisos['inventario_ver']) ? getInventarioBajoStock() : [];
 $formatStockQuantity = static function ($quantity) {
     return rtrim(rtrim(number_format((float) $quantity, 3, '.', ''), '0'), '.');
@@ -65,6 +169,7 @@ $menuNavegacion = [
     ['Menú', 'menu.php', '☷', $permisos['menu_ver'] ?? false],
     ['Clientes', 'clientes.php', '♙', $permisos['clientes_ver'] ?? false],
     ['Inventario', 'inventario.php', '▤', $permisos['inventario_ver'] ?? false],
+    ['Compras', 'compras.php', '▧', $permisos['inventario_ver'] ?? false],
     ['Empleados', 'empleados.php', '♧', $permisos['empleados'] ?? false],
     ['Informes', 'informes.php', '▥', $permisos['informes'] ?? false],
     ['Reportes Avanzados', 'reportes_avanzados.php', '▧', $permisos['informes'] ?? false],
@@ -81,6 +186,7 @@ $accionesRapidas = [
     ['Iniciar una venta nueva', 'pos.php', '🛒', $permisos['pos'] ?? false],
     ['Administrar menú', 'menu.php', '☷', $permisos['menu_ver'] ?? false],
     ['Revisar inventario', 'inventario.php', '▤', $permisos['inventario_ver'] ?? false],
+    [!empty($permisos['inventario_editar']) ? 'Registrar compras' : 'Consultar compras', 'compras.php', '▧', $permisos['inventario_ver'] ?? false],
     ['Ver informe de ventas', 'informes.php', '▥', $permisos['informes'] ?? false],
     ['Gestionar empleados', 'empleados.php', '♧', $permisos['empleados'] ?? false],
     ['Registrar merma', 'merma.php', '−', $permisos['mermas'] ?? false],
@@ -177,26 +283,59 @@ $accionesRapidas = [
                 <?php endforeach; ?>
             </nav>
 
-            <section class="dashboard-panel">
-                <h2>Información de ventas · últimos 7 días</h2>
-                <?php if (!$canViewSales): ?>
-                    <p class="dashboard-no-data">Tu cuenta no tiene permiso para ver los importes de ventas.</p>
-                <?php elseif (array_sum($ingresosSemana) <= 0): ?>
-                    <p class="dashboard-no-data">No hay ventas completadas en los últimos 7 días.</p>
-                <?php endif; ?>
-                <?php if ($canViewSales): ?>
-                    <div class="chart-bars" role="img" aria-label="Ingresos diarios de los últimos siete días">
-                        <?php foreach ($graficaSemana as $dia): ?>
-                            <?php $altura = $dia['ingresos'] > 0 ? max(5, ($dia['ingresos'] / $maxIngresoSemana) * 100) : 2; ?>
-                            <div class="chart-day" title="<?= htmlspecialchars($dia['fecha']) ?>: $<?= number_format($dia['ingresos'], 2) ?>">
-                                <span>$<?= number_format($dia['ingresos'], 0) ?></span>
-                                <div class="chart-bar" style="height: <?= number_format($altura, 2, '.', '') ?>%"></div>
-                                <span><?= htmlspecialchars($dia['etiqueta']) ?></span>
+            <?php if ($canViewDashboardChart): ?>
+                <section class="dashboard-panel">
+                    <div class="sales-chart-heading">
+                        <div>
+                            <h2>Gráfica de ventas</h2>
+                            <p><?= htmlspecialchars($chartPeriodLabel, ENT_QUOTES | ENT_HTML5, 'UTF-8') ?> · <?= htmlspecialchars($chartFrom, ENT_QUOTES | ENT_HTML5, 'UTF-8') ?> al <?= htmlspecialchars($chartUntil, ENT_QUOTES | ENT_HTML5, 'UTF-8') ?></p>
+                        </div>
+                        <form method="get" action="dashboard.php" class="sales-chart-filters">
+                            <label>Periodo
+                                <select name="grafica_periodo" id="grafica-periodo">
+                                    <?php foreach ($chartPeriodOptions as $value => $label): ?>
+                                        <option value="<?= htmlspecialchars($value, ENT_QUOTES | ENT_HTML5, 'UTF-8') ?>" <?= $chartPeriod === $value ? 'selected' : '' ?>><?= htmlspecialchars($label, ENT_QUOTES | ENT_HTML5, 'UTF-8') ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </label>
+                            <div id="rango-personalizado" class="sales-chart-date-range" <?= $chartPeriod !== 'rango' ? 'hidden' : '' ?>>
+                                <label>Desde
+                                    <input type="date" name="desde" value="<?= htmlspecialchars($customStartInput !== '' ? $customStartInput : $chartFrom, ENT_QUOTES | ENT_HTML5, 'UTF-8') ?>">
+                                </label>
+                                <label>Hasta
+                                    <input type="date" name="hasta" value="<?= htmlspecialchars($customEndInput !== '' ? $customEndInput : $chartUntil, ENT_QUOTES | ENT_HTML5, 'UTF-8') ?>">
+                                </label>
                             </div>
-                        <?php endforeach; ?>
+                            <button type="submit">Actualizar gráfica</button>
+                        </form>
                     </div>
-                <?php endif; ?>
-            </section>
+                    <?php if ($chartRangeError !== ''): ?>
+                        <p class="settings-message error" role="alert"><?= htmlspecialchars($chartRangeError, ENT_QUOTES | ENT_HTML5, 'UTF-8') ?></p>
+                    <?php endif; ?>
+                    <?php if (array_sum(array_column($chartBuckets, 'ingresos')) <= 0): ?>
+                        <p class="dashboard-no-data">No hay ventas completadas para el periodo seleccionado.</p>
+                    <?php endif; ?>
+                    <?php if ($chartBuckets): ?>
+                        <div class="chart-scroll">
+                            <div class="chart-bars" role="img" aria-label="Ingresos de ventas: <?= htmlspecialchars($chartPeriodLabel, ENT_QUOTES | ENT_HTML5, 'UTF-8') ?>">
+                                <?php foreach ($chartBuckets as $bucket): ?>
+                                    <?php $height = $bucket['ingresos'] > 0 ? max(5, ($bucket['ingresos'] / $maxChartIncome) * 100) : 2; ?>
+                                    <div class="chart-day" title="<?= htmlspecialchars($bucket['fecha'], ENT_QUOTES | ENT_HTML5, 'UTF-8') ?>: $<?= number_format($bucket['ingresos'], 2) ?>">
+                                        <span>$<?= number_format($bucket['ingresos'], 0) ?></span>
+                                        <div class="chart-bar" style="height: <?= number_format($height, 2, '.', '') ?>%"></div>
+                                        <span><?= htmlspecialchars($bucket['etiqueta'], ENT_QUOTES | ENT_HTML5, 'UTF-8') ?></span>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
+                    <?php endif; ?>
+                </section>
+                <script>
+                    document.getElementById('grafica-periodo').addEventListener('change', function () {
+                        document.getElementById('rango-personalizado').hidden = this.value !== 'rango';
+                    });
+                </script>
+            <?php endif; ?>
 
             <?php if ($canViewSales && $cashAlertThreshold > 0 && (float) $ventasHoy['efectivo'] >= $cashAlertThreshold): ?>
                 <section class="stock-alert cash-alert">
@@ -227,7 +366,7 @@ $accionesRapidas = [
             <?php endif; ?>
         </main>
     </div>
-    <script src="2.js"></script>
+    <script src="utilidades.js"></script>
 </body>
 
 </html>

@@ -12,11 +12,15 @@ if (!isset($_SESSION['user'])) {
 
 try {
     $data = json_decode(file_get_contents('php://input'), true);
-    $csrf_token = trim($data['csrf_token'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
+    if (!is_array($data)) {
+        throw new Exception('Datos inválidos');
+    }
+    $csrfInput = $data['csrf_token'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
+    $csrf_token = is_string($csrfInput) ? trim($csrfInput) : '';
     if (!validateCsrfToken($csrf_token)) {
         throw new Exception('Token de seguridad inválido');
     }
-    if (!is_array($data) || empty($data['id']) || !isset($data['nuevos_items'])) {
+    if (empty($data['id']) || (!array_key_exists('nuevos_items', $data) && !array_key_exists('items_existentes', $data))) {
         throw new Exception('Datos inválidos');
     }
 
@@ -35,8 +39,16 @@ try {
         $orden = [];
     }
 
-    $nuevos_items = normalizeMenuOrderItems($data['nuevos_items']);
-    $orden_actualizada = array_merge($orden, $nuevos_items);
+    $nuevos_items = $data['nuevos_items'] ?? [];
+    if (!is_array($nuevos_items)) {
+        throw new Exception('Lista de productos nuevos inválida.');
+    }
+    if (array_key_exists('items_existentes', $data)) {
+        $orden_actualizada = updateSuspendedOrderItems($orden, $data['items_existentes'], $nuevos_items);
+    } else {
+        $normalizedNewItems = normalizeMenuOrderItems($nuevos_items);
+        $orden_actualizada = array_merge($orden, $normalizedNewItems);
+    }
 
     updateVentaOrden($venta['id'], $orden_actualizada);
     registrarAuditoria($_SESSION['user']['id'], 'EDITAR_SUSPENDIDA', 'VENTA', $venta['id'], 'Orden actualizada');

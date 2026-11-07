@@ -1,15 +1,10 @@
-// Archivo de utilidades globales para la aplicación
+// Utilidades compartidas de la aplicación.
 function mostrarMensaje(mensaje) {
     if (typeof window !== 'undefined' && window.alert) {
         window.alert(mensaje);
     } else {
         console.log(mensaje);
     }
-}
-
-function tienePermiso(rolRequerido) {
-    // Esta función puede ampliarse si se necesita control de permisos del lado del cliente.
-    return true;
 }
 
 function safeFetchJson(url, options = {}) {

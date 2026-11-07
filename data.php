@@ -22,6 +22,56 @@ try {
         ]
     );
     $pdo->query('SELECT 1 FROM empleados LIMIT 0');
+    $employeeColumns = $pdo->query(
+        "SELECT COLUMN_NAME FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'empleados'
+         AND COLUMN_NAME IN ('suspendido', 'motivo_suspension', 'eliminado_en')"
+    )->fetchAll(PDO::FETCH_COLUMN);
+    $employeeColumnDefinitions = [
+        'suspendido' => 'TINYINT(1) NOT NULL DEFAULT 0',
+        'motivo_suspension' => 'VARCHAR(255) NULL',
+        'eliminado_en' => 'DATETIME NULL',
+    ];
+    foreach ($employeeColumnDefinitions as $column => $definition) {
+        if (!in_array($column, $employeeColumns, true)) {
+            $pdo->exec("ALTER TABLE empleados ADD COLUMN `$column` $definition");
+        }
+    }
+    $appTables = $pdo->query(
+        "SELECT TABLE_NAME FROM information_schema.TABLES
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('inventario', 'compras', 'compra_detalles')"
+    )->fetchAll(PDO::FETCH_COLUMN);
+    if (in_array('inventario', $appTables, true)) {
+        if (!in_array('compras', $appTables, true)) {
+            $pdo->exec("CREATE TABLE compras (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                proveedor VARCHAR(255) NOT NULL,
+                folio VARCHAR(100) NULL,
+                fecha_compra DATE NOT NULL,
+                total DECIMAL(12,2) NOT NULL DEFAULT 0,
+                observaciones TEXT NULL,
+                usuario_id INT NULL,
+                creado TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_compras_fecha (fecha_compra, id),
+                CONSTRAINT fk_compras_usuario FOREIGN KEY (usuario_id) REFERENCES empleados(id) ON DELETE SET NULL
+            ) ENGINE=InnoDB");
+        }
+        if (!in_array('compra_detalles', $appTables, true)) {
+            $pdo->exec("CREATE TABLE compra_detalles (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                compra_id BIGINT NOT NULL,
+                inventario_id INT NOT NULL,
+                item_nombre VARCHAR(255) NOT NULL,
+                cantidad DECIMAL(12,3) NOT NULL,
+                costo_unitario DECIMAL(10,2) NOT NULL,
+                subtotal DECIMAL(12,2) NOT NULL,
+                KEY idx_compra_detalles_compra (compra_id),
+                KEY idx_compra_detalles_inventario (inventario_id),
+                CONSTRAINT fk_compra_detalles_compra FOREIGN KEY (compra_id) REFERENCES compras(id) ON DELETE RESTRICT,
+                CONSTRAINT fk_compra_detalles_inventario FOREIGN KEY (inventario_id) REFERENCES inventario(id) ON DELETE RESTRICT
+            ) ENGINE=InnoDB");
+        }
+    }
 } catch (PDOException $e) {
     $dbError = $e->getMessage();
     $pdo = null;
@@ -31,8 +81,8 @@ function getAppConfig()
 {
     $default = [
         'nombre_restaurante' => 'Restaurante POS',
-        'color_fondo' => '#edf0f4',
-        'color_letra' => '#303642',
+        'color_fondo' => '#f4f1e9',
+        'color_letra' => '#211f1a',
         'fuente' => 'Arial, sans-serif',
         'formas_pago' => ['Efectivo', 'Tarjeta', 'Transferencia'],
         'metodo_pago_default' => 'Efectivo',
@@ -42,12 +92,29 @@ function getAppConfig()
         'pos_focus_search' => true,
         'pos_confirmar_venta' => true,
         'pos_require_table' => true,
+        'color_boton' => '#171717',
+        'color_boton_hover' => '#7a5e16',
         'recibo_titulo' => 'Restaurante POS',
         'recibo_pie' => 'Gracias por su compra',
+        'recibo_ancho_papel' => '80',
+        'recibo_alto_papel' => 200,
+        'recibo_margen_superior' => 2,
+        'recibo_margen_inferior' => 4,
+        'recibo_tamano_fuente' => 'normal',
+        'comanda_ancho_papel' => '80',
+        'comanda_tamano_fuente' => 'normal',
+        'comanda_margen_superior' => 2,
+        'comanda_margen_inferior' => 4,
         'recibo_mostrar_fecha' => true,
         'recibo_mostrar_precios' => true,
         'recibo_mostrar_impuestos' => true,
         'recibo_mostrar_descuentos' => true,
+        'recibo_mostrar_mesa' => true,
+        'recibo_mostrar_mesero' => true,
+        'recibo_mostrar_folio' => true,
+        'recibo_mostrar_notas' => true,
+        'recibo_mostrar_subtotal' => true,
+        'recibo_mostrar_pago' => true,
         'impresora_recibo_ip' => '',
         'impresora_recibo_puerto' => 9100,
         'impresora_cocina_ip' => '',
@@ -55,8 +122,6 @@ function getAppConfig()
         'impresora_barra_ip' => '',
         'impresora_barra_puerto' => 9100,
         'impresora_categorias_barra' => [],
-        'color_boton' => '#368fdb',
-        'color_boton_hover' => '#1768ad',
     ];
     $configPath = __DIR__ . '/config.json';
     if (is_file($configPath)) {
@@ -75,6 +140,32 @@ function getAppConfig()
             }
             if (!in_array($config['metodo_pago_default'], $config['formas_pago'], true)) {
                 $config['metodo_pago_default'] = $config['formas_pago'][0];
+            }
+            if (!in_array($config['recibo_ancho_papel'], ['58', '80'], true)) {
+                $config['recibo_ancho_papel'] = $default['recibo_ancho_papel'];
+            }
+            foreach (['recibo_alto_papel', 'recibo_margen_superior', 'recibo_margen_inferior'] as $printAreaKey) {
+                $minimum = $printAreaKey === 'recibo_alto_papel' ? 100 : 0;
+                $maximum = $printAreaKey === 'recibo_alto_papel' ? 500 : 20;
+                $value = filter_var($config[$printAreaKey], FILTER_VALIDATE_INT);
+                $config[$printAreaKey] = $value !== false && $value >= $minimum && $value <= $maximum
+                    ? $value
+                    : $default[$printAreaKey];
+            }
+            if (!in_array($config['recibo_tamano_fuente'], ['pequena', 'normal', 'grande'], true)) {
+                $config['recibo_tamano_fuente'] = $default['recibo_tamano_fuente'];
+            }
+            if (!in_array($config['comanda_ancho_papel'], ['58', '80'], true)) {
+                $config['comanda_ancho_papel'] = $default['comanda_ancho_papel'];
+            }
+            if (!in_array($config['comanda_tamano_fuente'], ['pequena', 'normal', 'grande'], true)) {
+                $config['comanda_tamano_fuente'] = $default['comanda_tamano_fuente'];
+            }
+            foreach (['comanda_margen_superior', 'comanda_margen_inferior'] as $printAreaKey) {
+                $value = filter_var($config[$printAreaKey], FILTER_VALIDATE_INT);
+                $config[$printAreaKey] = $value !== false && $value >= 0 && $value <= 20
+                    ? $value
+                    : $default[$printAreaKey];
             }
             foreach (['recibo', 'cocina', 'barra'] as $station) {
                 $ipKey = 'impresora_' . $station . '_ip';
@@ -170,6 +261,7 @@ function getDefaultPermissions($role)
         'cocina' => false,
         'cierre_caja' => false,
         'propinas' => false,
+        'dashboard_grafica' => false,
         'ventas_suspendidas_ver' => false,
         'eliminar_suspendidas' => false,
     ];
@@ -200,6 +292,7 @@ function getPermissionDefinitions()
             'ventas_suspendidas_ver' => 'Consultar y editar ventas suspendidas',
             'cierre_caja' => 'Consultar y registrar cierres de caja',
             'propinas' => 'Consultar y actualizar propinas',
+            'dashboard_grafica' => 'Ver la gráfica de ventas en el panel y elegir su rango de fechas',
         ],
         'Catálogo e inventario' => [
             'menu_ver' => 'Consultar el menú',
@@ -228,11 +321,31 @@ function getEmpleados()
     if (!$pdo)
         return [];
     try {
-        $stmt = $pdo->query("SELECT * FROM empleados");
+        $stmt = $pdo->query("SELECT * FROM empleados WHERE eliminado_en IS NULL ORDER BY nombre");
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (PDOException $e) {
+        error_log('Could not load active employees: ' . $e->getMessage());
         return [];
     }
+}
+
+function getEmpleadosEliminados()
+{
+    global $pdo;
+    if (!$pdo) {
+        throw new RuntimeException('No hay conexión con la base de datos.');
+    }
+    $stmt = $pdo->query("SELECT * FROM empleados WHERE eliminado_en IS NOT NULL ORDER BY eliminado_en DESC, nombre");
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function getEstadoEmpleado($employeeId)
+{
+    global $pdo;
+    $stmt = $pdo->prepare('SELECT suspendido, eliminado_en FROM empleados WHERE id = ?');
+    $stmt->execute([$employeeId]);
+    $employee = $stmt->fetch(PDO::FETCH_ASSOC);
+    return $employee ?: null;
 }
 
 function addEmpleado($nombre, $usuario, $password, $rol)
@@ -296,7 +409,10 @@ function verificarLogin($usuario, $password)
     if (!$pdo)
         return false;
     try {
-        $stmt = $pdo->prepare("SELECT * FROM empleados WHERE usuario = ?");
+        $stmt = $pdo->prepare(
+            'SELECT * FROM empleados
+             WHERE usuario = ? AND suspendido = 0 AND eliminado_en IS NULL'
+        );
         $stmt->execute([$usuario]);
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
         if ($user && password_verify($password, $user['password'])) {
@@ -414,6 +530,44 @@ function normalizeMenuOrderItems($items)
     }
 
     return $order;
+}
+
+function updateSuspendedOrderItems($originalOrder, $existingEdits, $newItems)
+{
+    if (!is_array($originalOrder) || !is_array($existingEdits) || !is_array($newItems)) {
+        throw new InvalidArgumentException('Estructura de orden inválida.');
+    }
+
+    $updatedOrder = [];
+    $usedIndexes = [];
+    foreach ($existingEdits as $edit) {
+        if (!is_array($edit)) {
+            throw new InvalidArgumentException('Detalle de producto inválido.');
+        }
+        $index = validateInteger($edit['indice'] ?? null, 0, max(0, count($originalOrder) - 1));
+        $quantity = validateInteger($edit['cantidad'] ?? null, 1, 10000);
+        if ($index === null || $quantity === null || isset($usedIndexes[$index]) || !isset($originalOrder[$index]) || !is_array($originalOrder[$index])) {
+            throw new InvalidArgumentException('No se pudo validar la edición de los productos.');
+        }
+
+        $usedIndexes[$index] = true;
+        $item = $originalOrder[$index];
+        $item['cantidad'] = $quantity;
+        $note = is_string($edit['nota'] ?? null) ? sanitizeString($edit['nota'], 500) : '';
+        if ($note === '') {
+            unset($item['nota']);
+        } else {
+            $item['nota'] = $note;
+        }
+        $updatedOrder[] = $item;
+    }
+
+    $updatedOrder = array_merge($updatedOrder, normalizeMenuOrderItems($newItems));
+    if ($updatedOrder === []) {
+        throw new InvalidArgumentException('La venta debe conservar al menos un producto.');
+    }
+
+    return $updatedOrder;
 }
 
 function addMenuItem($nombre, $precio, $categoria)
@@ -572,6 +726,160 @@ function adjustInventoryStock($id, $quantity, $reason)
         }
         throw $e;
     }
+}
+
+function registrarCompra($proveedor, $folio, $fecha, $observaciones, $items, $usuarioId)
+{
+    global $pdo;
+    if (!$pdo) {
+        throw new RuntimeException('No hay conexión con la base de datos.');
+    }
+    if (!is_array($items) || $items === []) {
+        throw new InvalidArgumentException('Agrega por lo menos un artículo a la compra.');
+    }
+    if (count($items) > 100) {
+        throw new InvalidArgumentException('Una compra no puede tener más de 100 artículos.');
+    }
+
+    $normalizedItems = [];
+    $inventoryIds = [];
+    foreach ($items as $item) {
+        if (!is_array($item)) {
+            throw new InvalidArgumentException('Uno de los artículos de la compra no es válido.');
+        }
+        $inventoryId = validateInteger($item['inventario_id'] ?? null, 1, PHP_INT_MAX);
+        $quantity = validateQuantity($item['cantidad'] ?? null, 0.001, 100000000);
+        $unitCost = validateDecimal($item['costo_unitario'] ?? null, 0, 1000000);
+        if ($inventoryId === null || $quantity === null || $unitCost === null) {
+            throw new InvalidArgumentException('Revisa el artículo, la cantidad y el costo unitario.');
+        }
+        if (isset($inventoryIds[$inventoryId])) {
+            throw new InvalidArgumentException('No repitas un artículo en la compra.');
+        }
+        $inventoryIds[$inventoryId] = $inventoryId;
+        $normalizedItems[] = [
+            'inventario_id' => $inventoryId,
+            'cantidad' => $quantity,
+            'costo_unitario' => $unitCost,
+        ];
+    }
+
+    sort($inventoryIds, SORT_NUMERIC);
+    $pdo->beginTransaction();
+    try {
+        $placeholders = implode(',', array_fill(0, count($inventoryIds), '?'));
+        $inventoryQuery = $pdo->prepare(
+            "SELECT id, item FROM inventario WHERE id IN ($placeholders) ORDER BY id FOR UPDATE"
+        );
+        $inventoryQuery->execute($inventoryIds);
+        $inventoryById = [];
+        foreach ($inventoryQuery->fetchAll(PDO::FETCH_ASSOC) as $inventoryItem) {
+            $inventoryById[(int) $inventoryItem['id']] = $inventoryItem;
+        }
+        if (count($inventoryById) !== count($inventoryIds)) {
+            throw new InvalidArgumentException('Uno o más artículos ya no existen en el inventario.');
+        }
+
+        $total = 0;
+        foreach ($normalizedItems as &$item) {
+            $item['nombre'] = $inventoryById[$item['inventario_id']]['item'];
+            $item['subtotal'] = round($item['cantidad'] * $item['costo_unitario'], 2);
+            $total += $item['subtotal'];
+        }
+        unset($item);
+
+        $purchase = $pdo->prepare(
+            'INSERT INTO compras (proveedor, folio, fecha_compra, total, observaciones, usuario_id)
+             VALUES (?, ?, ?, ?, ?, ?)'
+        );
+        $purchase->execute([$proveedor, $folio !== '' ? $folio : null, $fecha, round($total, 2), $observaciones, $usuarioId]);
+        $purchaseId = (int) $pdo->lastInsertId();
+        $detail = $pdo->prepare(
+            'INSERT INTO compra_detalles
+             (compra_id, inventario_id, item_nombre, cantidad, costo_unitario, subtotal)
+             VALUES (?, ?, ?, ?, ?, ?)'
+        );
+        $stock = $pdo->prepare(
+            'UPDATE inventario SET cantidad = cantidad + ?, precio_costo = ? WHERE id = ?'
+        );
+        $movement = $pdo->prepare(
+            "INSERT INTO movimientos_inventario (inventario_id, tipo, cantidad, motivo, usuario_id)
+             VALUES (?, 'compra', ?, ?, ?)"
+        );
+        foreach ($normalizedItems as $item) {
+            $detail->execute([
+                $purchaseId,
+                $item['inventario_id'],
+                $item['nombre'],
+                $item['cantidad'],
+                $item['costo_unitario'],
+                $item['subtotal'],
+            ]);
+            $stock->execute([$item['cantidad'], $item['costo_unitario'], $item['inventario_id']]);
+            $reason = 'Compra #' . $purchaseId . ' de ' . $proveedor;
+            if ($folio !== '') {
+                $reason .= ' (folio ' . $folio . ')';
+            }
+            $movement->execute([
+                $item['inventario_id'],
+                $item['cantidad'],
+                mb_substr($reason, 0, 255),
+                $usuarioId,
+            ]);
+        }
+
+        $pdo->commit();
+        return $purchaseId;
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+}
+
+function getComprasRecientes($limit = 50)
+{
+    global $pdo;
+    $limit = max(1, min(200, (int) $limit));
+    $stmt = $pdo->prepare(
+        'SELECT c.*, e.nombre AS usuario_nombre,
+                (SELECT COUNT(*) FROM compra_detalles d WHERE d.compra_id = c.id) AS cantidad_articulos
+         FROM compras c
+         LEFT JOIN empleados e ON e.id = c.usuario_id
+         ORDER BY c.fecha_compra DESC, c.id DESC
+         LIMIT ?'
+    );
+    $stmt->bindValue(1, $limit, PDO::PARAM_INT);
+    $stmt->execute();
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function getDetallesCompras($compraIds)
+{
+    global $pdo;
+    if (!is_array($compraIds) || $compraIds === []) {
+        return [];
+    }
+    $ids = array_values(array_unique(array_filter(
+        array_map('intval', $compraIds),
+        static fn($id) => $id > 0
+    )));
+    if ($ids === []) {
+        return [];
+    }
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $stmt = $pdo->prepare(
+        "SELECT compra_id, item_nombre, cantidad, costo_unitario, subtotal
+         FROM compra_detalles WHERE compra_id IN ($placeholders)
+         ORDER BY compra_id DESC, id ASC"
+    );
+    $stmt->execute($ids);
+    $details = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $details[(int) $row['compra_id']][] = $row;
+    }
+    return $details;
 }
 
 function getInventarioItemById($id)
@@ -809,7 +1117,11 @@ function addVenta($mesero_id, $mesa, $orden, $suspendida = false, $tipo_pago = n
 function getMeseros()
 {
     global $pdo;
-    $stmt = $pdo->prepare("SELECT * FROM empleados WHERE rol = 'mesero'");
+    $stmt = $pdo->prepare(
+        "SELECT * FROM empleados
+         WHERE rol = 'mesero' AND suspendido = 0 AND eliminado_en IS NULL
+         ORDER BY nombre"
+    );
     $stmt->execute();
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
@@ -831,13 +1143,14 @@ function getVentasSuspendidas($search = '')
         $search_wild = "%$search%";
         $params = [$search_wild, $search_wild, $search_wild, $search_wild];
     }
+    $sql .= ' ORDER BY v.fecha DESC, v.id DESC';
     try {
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (PDOException $e) {
         error_log("DB Error in getVentasSuspendidas: " . $e->getMessage());
-        return [];
+        throw new RuntimeException('No se pudieron consultar las ventas en espera.', 0, $e);
     }
 }
 

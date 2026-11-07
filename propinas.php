@@ -146,7 +146,7 @@ foreach ($stmtPago->fetchAll(PDO::FETCH_ASSOC) as $row) {
             </tbody>
         </table>
     </main>
-    <script src="2.js"></script>
+    <script src="utilidades.js"></script>
 </body>
 
 </html>

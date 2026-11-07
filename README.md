@@ -15,6 +15,9 @@ Sistema de punto de venta profesional para restaurante construido con HTML5, CSS
 - ✅ Cálculo de cambio para efectivo
 - ✅ Sistema de propinas con quick-select (0%, 10%, 15%, 20%)
 - ✅ Suspensión y reanudación de ventas
+- ✅ Lista independiente de ventas en espera para buscar, editar productos/notas y completar cobros
+- ✅ Panel de mesas y meseros separado a la izquierda del menú en pantallas amplias
+- ✅ Acceso desde campana a la pantalla de pedidos de reparto (la integración con plataformas requiere acceso oficial)
 - ✅ Modal de confirmación antes de cobrar
 - ✅ Validación en servidor de productos y precios vigentes al guardar ventas y añadir artículos a ventas suspendidas
 - ✅ Venta directa de artículos comercializables del inventario, con cantidades por producto
@@ -43,15 +46,19 @@ Sistema de punto de venta profesional para restaurante construido con HTML5, CSS
 ### Gestión Administrativa
 - ✅ Panel de empleados con roles (Mesero, Cocinero, Gerente)
 - ✅ Acceso desde Configuración para administrar empleados y permisos
+- ✅ Suspensión temporal de empleados y archivo reversible que conserva el historial de ventas
 - ✅ Gestión de menú con precios y categorías
 - ✅ Inventario con búsqueda por campos, categorías, código de barras, costo y precio de venta
+- ✅ Registro de compras con proveedor, folio, detalle por artículo e incremento transaccional de existencias
 - ✅ Sistema de promociones con rango de fechas
 - ✅ Registro de merma (pérdidas/daños)
 - ✅ Kitchen Display System (KDS) con estados de preparación, antigüedad de comandas y actualización automática
 - ✅ Cierre de caja diario con resumen completo
 - ✅ Auditoría de todas las operaciones
 - ✅ Configuración personalizable de impuestos, mesas, POS, recibos y apariencia
+- ✅ Paleta predeterminada negro y dorado, personalizable desde Configuración
 - ✅ Permisos granulares por empleado, validados también en el servidor
+- ✅ Permiso individual para mostrar u ocultar la gráfica de ventas del panel y filtros por hoy, ayer, semana, mes, año actual, año anterior o rango personalizado
 
 ### Seguridad
 - ✅ Autenticación obligatoria
@@ -92,7 +99,7 @@ restaurante/
 ├── data.php               # Capa de datos (BD)
 ├── style.php              # CSS dinámico
 ├── setup.php              # Instalación inicial
-├── 2.js                   # JavaScript compartido
+├── utilidades.js          # Utilidades JavaScript compartidas
 ├── config.json            # Configuración en JSON
 └── README.md              # Este archivo
 ```
@@ -129,7 +136,6 @@ restaurante/
 
 ### Corto Plazo
 - [ ] Modificadores de items (tamaño, extras, preparación)
-- [ ] Inventario con SKU y códigos de barras
 - [ ] Clientes con historial de compra
 - [ ] Integración de caja registradora física
 

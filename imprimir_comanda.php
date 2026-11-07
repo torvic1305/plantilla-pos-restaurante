@@ -127,43 +127,62 @@ try {
     $restaurantInput = $config['recibo_titulo'] ?? $config['nombre_restaurante'] ?? 'Restaurante POS';
     $restaurant = sanitizeString(is_string($restaurantInput) ? $restaurantInput : 'Restaurante POS', 100);
     $isPreReceipt = $station === 'recibo' && !empty($data['pre_recibo']) && !$isTest;
+    $printPrefix = $station === 'recibo' ? 'recibo' : 'comanda';
+    $paperWidth = (int) $config[$printPrefix . '_ancho_papel'];
+    $fontSize = $config[$printPrefix . '_tamano_fuente'];
+    $baseLineWidth = $paperWidth === 58 ? 32 : 42;
+    $lineWidth = $fontSize === 'pequena'
+        ? (int) floor($baseLineWidth * 4 / 3)
+        : ($fontSize === 'grande' ? (int) floor($baseLineWidth / 2) : $baseLineWidth);
+    $separator = str_repeat('-', $lineWidth);
     $title = $station === 'recibo'
         ? ($isPreReceipt ? 'PRE-RECIBO' : 'RECIBO')
         : ($station === 'cocina' ? 'COMANDA COCINA' : 'COMANDA BARRA');
-    $lines = ["\x1B\x40", "\x1B\x74\x02", "\x1B\x61\x01", "\x1B\x45\x01"];
-    $lines[] = printerText($restaurant, 42);
-    $lines[] = "\x1B\x45\x00";
-    $lines[] = printerText($isTest ? 'PRUEBA DE IMPRESION' : $title, 42);
-    $lines[] = str_repeat('-', 42);
+    $headerCommands = "\x1B\x40\x1B\x74\x02\x1B\x61\x01\x1B\x45\x01";
+    $topFeedLines = 0;
+    if ($station === 'recibo' || $station === 'cocina' || $station === 'barra') {
+        $headerCommands .= $fontSize === 'pequena'
+            ? "\x1B\x4D\x01"
+            : ($fontSize === 'grande' ? "\x1B\x4D\x00\x1D\x21\x10" : "\x1B\x4D\x00");
+        $topFeedLines = (int) ceil((int) $config[$printPrefix . '_margen_superior'] / 3.75);
+    }
+    if ($topFeedLines > 0) {
+        $headerCommands .= "\x1B\x64" . chr(min(255, $topFeedLines));
+    }
+    $lines = [$headerCommands . printerText($restaurant, $lineWidth)];
+    $lines[] = "\x1B\x45\x00" . printerText($isTest ? 'PRUEBA DE IMPRESION' : $title, $lineWidth);
+    $lines[] = $separator;
     if (!$isTest) {
         $mesa = $data['mesa'] ?? '';
         if (!is_string($mesa) && !is_int($mesa)) {
             $mesa = '';
         }
         $mesero = sanitizeString(is_string($data['mesero'] ?? null) ? $data['mesero'] : '', 100);
-        $lines[] = printerText('Mesa: ' . ((string) $mesa === '0' ? 'Mostrador' : $mesa), 42);
-        if ($mesero !== '') {
-            $lines[] = printerText('Mesero: ' . $mesero, 42);
+        if ($station !== 'recibo' || !empty($config['recibo_mostrar_mesa'])) {
+            $lines[] = printerText('Mesa: ' . ((string) $mesa === '0' ? 'Mostrador' : $mesa), $lineWidth);
+        }
+        if ($mesero !== '' && ($station !== 'recibo' || !empty($config['recibo_mostrar_mesero']))) {
+            $lines[] = printerText('Mesero: ' . $mesero, $lineWidth);
         }
         if (!empty($config['recibo_mostrar_fecha'])) {
-            $lines[] = printerText('Fecha: ' . date('d/m/Y H:i:s'), 42);
+            $lines[] = printerText('Fecha: ' . date('d/m/Y H:i:s'), $lineWidth);
         }
-        if ($station === 'recibo' && isset($data['venta_id'])) {
+        if ($station === 'recibo' && !empty($config['recibo_mostrar_folio']) && isset($data['venta_id'])) {
             $saleId = is_string($data['venta_id']) || is_int($data['venta_id']) ? (string) $data['venta_id'] : '';
-            $lines[] = printerText('Venta: #' . sanitizeString($saleId, 20), 42);
+            $lines[] = printerText('Venta: #' . sanitizeString($saleId, 20), $lineWidth);
         }
-        $lines[] = str_repeat('-', 42);
+        $lines[] = $separator;
     }
 
     $subtotal = 0;
     foreach ($items as $item) {
         $subtotal += $item['price'] * $item['quantity'];
-        $lines[] = printerText($item['quantity'] . ' x ' . $item['name'], 42);
+        $lines[] = printerText($item['quantity'] . ' x ' . $item['name'], $lineWidth);
         if ($station === 'recibo' && !empty($config['recibo_mostrar_precios'])) {
-            $lines[] = printerText('   $' . printerMoney($item['price'] * $item['quantity']), 42);
+            $lines[] = printerText('   $' . printerMoney($item['price'] * $item['quantity']), $lineWidth);
         }
-        if ($item['note'] !== '') {
-            $lines[] = printerText('   Nota: ' . $item['note'], 42);
+        if ($item['note'] !== '' && ($station !== 'recibo' || !empty($config['recibo_mostrar_notas']))) {
+            $lines[] = printerText('   Nota: ' . $item['note'], $lineWidth);
         }
     }
 
@@ -171,34 +190,35 @@ try {
         $discount = validateDecimal($data['descuento'] ?? 0, 0, 999999) ?? 0;
         $tax = validateDecimal($data['impuesto'] ?? 0, 0, 999999) ?? 0;
         $total = max(0, $subtotal - $discount + $tax);
-        $lines[] = str_repeat('-', 42);
-        $lines[] = printerText('Subtotal: $' . printerMoney($subtotal), 42);
+        $lines[] = $separator;
+        if (!empty($config['recibo_mostrar_subtotal'])) {
+            $lines[] = printerText('Subtotal: $' . printerMoney($subtotal), $lineWidth);
+        }
         if (!empty($config['recibo_mostrar_descuentos']) && $discount > 0) {
-            $lines[] = printerText('Descuento: -$' . printerMoney($discount), 42);
+            $lines[] = printerText('Descuento: -$' . printerMoney($discount), $lineWidth);
         }
         if (!empty($config['recibo_mostrar_impuestos']) && $tax > 0) {
-            $lines[] = printerText('Impuesto: $' . printerMoney($tax), 42);
+            $lines[] = printerText('Impuesto: $' . printerMoney($tax), $lineWidth);
         }
-        $lines[] = "\x1B\x45\x01";
-        $lines[] = printerText('TOTAL: $' . printerMoney($total), 42);
-        $lines[] = "\x1B\x45\x00";
-        if (!$isPreReceipt) {
+        $lines[] = "\x1B\x45\x01" . printerText('TOTAL: $' . printerMoney($total), $lineWidth) . "\x1B\x45\x00";
+        if (!$isPreReceipt && !empty($config['recibo_mostrar_pago'])) {
             $paymentType = is_string($data['tipo_pago'] ?? null) ? sanitizeString($data['tipo_pago'], 40) : '';
-            $lines[] = printerText('Pago: ' . $paymentType, 42);
+            $lines[] = printerText('Pago: ' . $paymentType, $lineWidth);
             if ($paymentType === 'Efectivo') {
                 $paid = validateDecimal($data['monto_pagado'] ?? 0, 0, 99999999) ?? 0;
-                $lines[] = printerText('Pagado: $' . printerMoney($paid), 42);
-                $lines[] = printerText('Cambio: $' . printerMoney(max(0, $paid - $total)), 42);
+                $lines[] = printerText('Pagado: $' . printerMoney($paid), $lineWidth);
+                $lines[] = printerText('Cambio: $' . printerMoney(max(0, $paid - $total)), $lineWidth);
             }
         }
         $footer = sanitizeString($config['recibo_pie'] ?? '', 160);
         if ($footer !== '') {
-            $lines[] = str_repeat('-', 42);
-            $lines[] = printerText($footer, 42);
+            $lines[] = $separator;
+            $lines[] = printerText($footer, $lineWidth);
         }
     }
 
-    $lines[] = "\n\n\n\x1D\x56\x00";
+    $bottomFeedLines = (int) ceil((int) $config[$printPrefix . '_margen_inferior'] / 3.75);
+    $lines[] = str_repeat("\n", 2 + $bottomFeedLines) . "\x1D\x56\x00";
     $payload = implode("\n", $lines);
     $socket = @stream_socket_client(
         'tcp://' . $ip . ':' . $port,

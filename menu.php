@@ -126,7 +126,7 @@ $recipeInventory = $canEditRecipes ? getInventario() : [];
             </section>
         <?php endif; ?>
     </main>
-    <script src="2.js"></script>
+    <script src="utilidades.js"></script>
     <script>
         const csrfToken = '<?= htmlspecialchars(getCsrfToken(), ENT_QUOTES | ENT_HTML5, 'UTF-8') ?>';
 

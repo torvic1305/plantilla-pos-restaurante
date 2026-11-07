@@ -25,16 +25,36 @@ $promociones_pos = array_map(static function ($promo) {
         'descuento' => max(0, min(100, (float) ($promo['descuento'] ?? 0)))
     ];
 }, $promociones_activas);
+$suspendidaInicialId = isset($_GET['suspendida']) && is_string($_GET['suspendida'])
+    ? filter_var($_GET['suspendida'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]])
+    : false;
 $puedeConfigurar = !empty($user['permisos']['config']);
 $meseros_pos = $puedeConfigurar ? ($meseros ?: [$user]) : [$user];
 $config_recibos = [
     'nombre' => (string) ($config['nombre_restaurante'] ?? 'Restaurante POS'),
     'titulo' => (string) ($config['recibo_titulo'] ?? 'Restaurante POS'),
     'pie' => (string) ($config['recibo_pie'] ?? 'Gracias por su compra'),
+    'anchoPapel' => (int) ($config['recibo_ancho_papel'] ?? '80'),
+    'altoPapel' => (int) ($config['recibo_alto_papel'] ?? 200),
+    'margenSuperior' => (int) ($config['recibo_margen_superior'] ?? 2),
+    'margenInferior' => (int) ($config['recibo_margen_inferior'] ?? 4),
+    'tamanoFuente' => (string) ($config['recibo_tamano_fuente'] ?? 'normal'),
     'mostrarFecha' => !empty($config['recibo_mostrar_fecha']),
     'mostrarPrecios' => !empty($config['recibo_mostrar_precios']),
     'mostrarDescuentos' => !empty($config['recibo_mostrar_descuentos']),
     'mostrarImpuestos' => !empty($config['recibo_mostrar_impuestos']),
+    'mostrarMesa' => !empty($config['recibo_mostrar_mesa']),
+    'mostrarMesero' => !empty($config['recibo_mostrar_mesero']),
+    'mostrarFolio' => !empty($config['recibo_mostrar_folio']),
+    'mostrarNotas' => !empty($config['recibo_mostrar_notas']),
+    'mostrarSubtotal' => !empty($config['recibo_mostrar_subtotal']),
+    'mostrarPago' => !empty($config['recibo_mostrar_pago']),
+];
+$config_comandas = [
+    'anchoPapel' => (int) ($config['comanda_ancho_papel'] ?? '80'),
+    'tamanoFuente' => (string) ($config['comanda_tamano_fuente'] ?? 'normal'),
+    'margenSuperior' => (int) ($config['comanda_margen_superior'] ?? 2),
+    'margenInferior' => (int) ($config['comanda_margen_inferior'] ?? 4),
 ];
 $config_impresoras = [
     'recibo' => [
@@ -53,6 +73,7 @@ $config_impresoras = [
         ? $config['impresora_categorias_barra']
         : [],
 ];
+$escape = static fn($value) => htmlspecialchars((string) $value, ENT_QUOTES | ENT_HTML5, 'UTF-8');
 $categorias_menu = [];
 foreach ($menu as $item) {
     $categoria = trim($item['categoria'] ?: 'General');
@@ -77,73 +98,104 @@ foreach ($inventarioVenta as $item) {
     <link rel="stylesheet" href="style.php">
 </head>
 
-<body>
-    <header>
-        <h1>Punto de Venta</h1>
-        <a href="dashboard.php">Volver</a>
-    </header>
-    <main>
-        <div class="pos-container">
-            <div class="mesas">
-                <h3>Mesas</h3>
-                <?php if ($puedeConfigurar): ?>
-                <div class="mesas-config">
-                    <label>Mesas configuradas: <input id="mesas-count" type="number" min="1"
-                        value="<?php echo count($mesas); ?>"></label>
-                    <button id="guardar-mesas">Guardar mesas</button>
-                </div>
-                <?php endif; ?>
-                <h4>Asignar mesa</h4>
-                <select id="mesero-select">
-                    <?php foreach ($meseros_pos as $m) {
-                        echo "<option value='" . (int) $m['id'] . "'>" . htmlspecialchars($m['nombre'], ENT_QUOTES | ENT_HTML5, 'UTF-8') . "</option>";
-                    } ?>
-                </select>
-                <div class="mesas-grid">
-                    <?php foreach ($mesas as $m) {
-                        echo "<button class='mesa-btn' data-mesa='$m'>Mesa $m</button>";
-                    } ?>
-                    <?php if (!$requiere_mesa): ?>
-                        <button class="mesa-btn mesa-mostrad-btn" data-mesa="0">Mostrador</button>
-                    <?php endif; ?>
-                </div>
-                <p>Mesero asignado: <span
-                        id="current-mesero-text"><?php echo htmlspecialchars($meseros_pos[0]['nombre'] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8'); ?></span></p>
-                <p>Mesa seleccionada: <span id="current-mesa-text">Ninguna</span></p>
+<body class="pos-page">
+    <header class="pos-header">
+        <div class="pos-header-brand">
+            <span class="pos-brand-mark" aria-hidden="true">R</span>
+            <div>
+                <span class="pos-eyebrow">RESTAURANTE POS</span>
+                <h1>Punto de Venta</h1>
             </div>
+        </div>
+        <div class="pos-header-actions">
+            <?php if (!empty($user['permisos']['ventas_suspendidas_ver'])): ?>
+                <a class="pos-pending-sales-link" href="ventas_suspendidas.php"><span aria-hidden="true">◷</span> Ventas en espera</a>
+            <?php endif; ?>
+            <a class="pos-notification-link" href="pedidos_domicilio.php" aria-label="Notificaciones de reparto" title="Notificaciones de reparto">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
+                <span class="visually-hidden">Notificaciones de reparto</span>
+            </a>
+            <span class="pos-user-chip"><span class="pos-status-dot" aria-hidden="true"></span><?= $escape($user['nombre'] ?? '') ?></span>
+            <a href="dashboard.php"><span aria-hidden="true">‹</span> Volver al panel</a>
+        </div>
+    </header>
+    <main class="pos-main">
+        <div class="pos-container">
             <div class="menu">
-                <h3>Menú</h3>
+                <div class="pos-menu-heading">
+                    <div>
+                        <span class="pos-section-kicker">MENÚ</span>
+                        <h2>¿Qué vamos a servir?</h2>
+                    </div>
+                    <span class="pos-result-count"><span id="menu-result-count"><?= count($menu) + count($inventarioVenta) ?></span> productos</span>
+                </div>
                 <div class="menu-filtros">
-                    <label>Buscar:<br><input id="menu-search" type="text" placeholder="Buscar artículo"></label>
-                    <label>Categoría:<br>
-                        <select id="menu-categoria">
-                            <option value="">Todas</option>
-                            <?php foreach ($categorias_menu as $categoria) {
-                                echo "<option value='" . htmlspecialchars($categoria) . "'>" . htmlspecialchars($categoria) . "</option>";
-                            } ?>
-                        </select>
+                    <label class="pos-menu-search">
+                        <span aria-hidden="true">⌕</span>
+                        <span class="visually-hidden">Buscar producto</span>
+                        <input id="menu-search" type="search" placeholder="Buscar platillo o producto..." autocomplete="off">
                     </label>
                 </div>
+                <div class="pos-category-bar" role="group" aria-label="Filtrar productos por categoría">
+                    <button type="button" class="pos-category-chip active" data-category="" aria-pressed="true">Todos</button>
+                    <?php foreach ($categorias_menu as $categoria): ?>
+                        <button type="button" class="pos-category-chip" data-category="<?= $escape($categoria) ?>" aria-pressed="false"><?= $escape($categoria) ?></button>
+                    <?php endforeach; ?>
+                </div>
+                <select id="menu-categoria" class="visually-hidden" tabindex="-1" aria-hidden="true">
+                    <option value="">Todas</option>
+                    <?php foreach ($categorias_menu as $categoria): ?>
+                        <option value="<?= $escape($categoria) ?>"><?= $escape($categoria) ?></option>
+                    <?php endforeach; ?>
+                </select>
                 <div class="menu-grid" id="menu-grid">
-                    <?php foreach ($menu as $item) {
-                        echo "<button type='button' class='menu-item' data-tipo='menu' data-id='" . (int) $item['id'] . "' data-nombre='" . htmlspecialchars($item['nombre'], ENT_QUOTES | ENT_HTML5, 'UTF-8') . "' data-precio='" . htmlspecialchars($item['precio'], ENT_QUOTES | ENT_HTML5, 'UTF-8') . "' data-categoria='" . htmlspecialchars($item['categoria'], ENT_QUOTES | ENT_HTML5, 'UTF-8') . "'>" . htmlspecialchars($item['nombre'], ENT_QUOTES | ENT_HTML5, 'UTF-8') . " - $" . htmlspecialchars($item['precio'], ENT_QUOTES | ENT_HTML5, 'UTF-8') . "</button>";
-                    } ?>
-                    <?php if ($inventarioVenta): ?><h4 class="pos-inventory-heading" style="grid-column: 1 / -1;">Artículos de inventario</h4><?php endif; ?>
-                    <?php foreach ($inventarioVenta as $item) {
-                        echo "<button type='button' class='menu-item inventory-sale-item' data-tipo='inventario' data-id='" . (int) $item['id'] . "' data-nombre='" . htmlspecialchars($item['item'], ENT_QUOTES | ENT_HTML5, 'UTF-8') . "' data-precio='" . htmlspecialchars($item['precio_venta'], ENT_QUOTES | ENT_HTML5, 'UTF-8') . "' data-categoria='" . htmlspecialchars($item['categoria'] ?? 'Inventario', ENT_QUOTES | ENT_HTML5, 'UTF-8') . "' data-unidad='" . htmlspecialchars($item['unidad'] ?? 'pieza', ENT_QUOTES | ENT_HTML5, 'UTF-8') . "'>" . htmlspecialchars($item['item'], ENT_QUOTES | ENT_HTML5, 'UTF-8') . " (" . htmlspecialchars($item['unidad'] ?? 'pieza', ENT_QUOTES | ENT_HTML5, 'UTF-8') . ") - $" . htmlspecialchars($item['precio_venta'], ENT_QUOTES | ENT_HTML5, 'UTF-8') . "</button>";
-                    } ?>
+                    <?php foreach ($menu as $item):
+                        $itemName = (string) ($item['nombre'] ?? '');
+                        $itemCategory = trim((string) ($item['categoria'] ?? '')) ?: 'General';
+                        $itemPrice = (float) ($item['precio'] ?? 0);
+                    ?>
+                        <button type="button" class="menu-item" data-tipo="menu" data-id="<?= (int) $item['id'] ?>" data-nombre="<?= $escape($itemName) ?>" data-precio="<?= $escape(number_format($itemPrice, 2, '.', '')) ?>" data-categoria="<?= $escape($itemCategory) ?>" aria-label="Agregar <?= $escape($itemName) ?> al pedido, $<?= $escape(number_format($itemPrice, 2)) ?>">
+                            <span class="menu-item-visual" aria-hidden="true"><span class="menu-item-plate"></span><span class="menu-item-plus">+</span></span>
+                            <span class="menu-item-details">
+                                <span class="menu-item-name"><?= $escape($itemName) ?></span>
+                                <span class="menu-item-category"><?= $escape($itemCategory) ?></span>
+                                <span class="menu-item-price">$<?= $escape(number_format($itemPrice, 2)) ?></span>
+                            </span>
+                        </button>
+                    <?php endforeach; ?>
+                    <?php if ($inventarioVenta): ?><h3 class="pos-inventory-heading">Artículos de inventario</h3><?php endif; ?>
+                    <?php foreach ($inventarioVenta as $item):
+                        $itemName = (string) ($item['item'] ?? '');
+                        $itemCategory = trim((string) ($item['categoria'] ?? '')) ?: 'Inventario';
+                        $itemPrice = (float) ($item['precio_venta'] ?? 0);
+                        $itemUnit = (string) ($item['unidad'] ?? 'pieza');
+                    ?>
+                        <button type="button" class="menu-item inventory-sale-item" data-tipo="inventario" data-id="<?= (int) $item['id'] ?>" data-nombre="<?= $escape($itemName) ?>" data-precio="<?= $escape(number_format($itemPrice, 2, '.', '')) ?>" data-categoria="<?= $escape($itemCategory) ?>" data-unidad="<?= $escape($itemUnit) ?>" aria-label="Agregar <?= $escape($itemName) ?> al pedido, $<?= $escape(number_format($itemPrice, 2)) ?>">
+                            <span class="menu-item-visual" aria-hidden="true"><span class="menu-item-plate"></span><span class="menu-item-plus">+</span></span>
+                            <span class="menu-item-details">
+                                <span class="menu-item-name"><?= $escape($itemName) ?></span>
+                                <span class="menu-item-category"><?= $escape($itemUnit) ?> · <?= $escape($itemCategory) ?></span>
+                                <span class="menu-item-price">$<?= $escape(number_format($itemPrice, 2)) ?></span>
+                            </span>
+                        </button>
+                    <?php endforeach; ?>
                 </div>
             </div>
             <div class="orden">
-                <h3>Orden Actual</h3>
-                <p id="estado-main" class="estado-info">Seleccione productos para comenzar la venta.</p>
+                <div class="pos-order-heading">
+                    <div>
+                        <span class="pos-section-kicker">PEDIDO</span>
+                        <h2>Orden actual</h2>
+                    </div>
+                    <span class="pos-order-count"><span id="item-count">0</span></span>
+                </div>
+                <p id="estado-main" class="estado-info">Selecciona productos para comenzar.</p>
                 <ul id="orden-list"></ul>
                 <div class="venta-resumen">
                     <p>Subtotal: $<span id="subtotal-amount">0.00</span></p>
                     <p>Descuento: $<span id="discount-amount">0.00</span></p>
                     <p>Impuesto (<?php echo $impuesto; ?>%): $<span id="tax-amount">0.00</span></p>
                     <p>Total final: $<span id="total-amount">0.00</span></p>
-                    <p>Items: <span id="item-count">0</span></p>
                 </div>
                 <div class="venta-acciones">
                     <label>Descuento manual: $<input type="number" id="descuento-manual" min="0" step="0.01"
@@ -204,54 +256,109 @@ foreach ($inventarioVenta as $item) {
                 <button id="imprimir-cocina">Imprimir Cocina</button>
                 <button id="imprimir-barra">Imprimir Barra</button>
             </div>
-            <div class="suspendidas" <?= empty($user['permisos']['ventas_suspendidas_ver']) ? 'hidden' : '' ?>>
-                <h3>Ventas Suspendidas</h3>
-                <div class="suspendidas-search">
-                    <input type="text" id="search-suspendidas" placeholder="Buscar ID, mesa, mesero">
-                    <button id="buscar-suspendidas">Buscar</button>
+            <section class="mesas">
+                <div class="pos-service-heading">
+                    <div>
+                        <span class="pos-section-kicker">SERVICIO</span>
+                        <h2>Mesa y mesero</h2>
+                    </div>
+                    <label class="pos-waiter-select">Atiende
+                        <select id="mesero-select">
+                            <?php foreach ($meseros_pos as $m): ?>
+                                <option value="<?= (int) $m['id'] ?>"><?= $escape($m['nombre']) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </label>
+                    <?php if ($puedeConfigurar): ?>
+                        <details class="mesas-config">
+                            <summary>Configurar mesas</summary>
+                            <label>Mesas configuradas
+                                <input id="mesas-count" type="number" min="1" value="<?= count($mesas) ?>">
+                            </label>
+                            <button id="guardar-mesas" type="button">Guardar</button>
+                        </details>
+                    <?php endif; ?>
                 </div>
-                <div id="suspendidas-results"></div>
-                <div id="suspendida-selected" style="display: none; margin-top: 16px;">
-                    <h4>Venta suspendida seleccionada</h4>
-                    <p>ID: <span id="selected-venta-id"></span></p>
-                    <p>Mesero: <span id="selected-venta-mesero"></span></p>
-                    <p>Mesa: <span id="selected-venta-mesa"></span></p>
-                    <h5>Items existentes</h5>
+                <div class="mesas-grid" aria-label="Selecciona una mesa">
+                    <?php foreach ($mesas as $m) {
+                        echo "<button type='button' class='mesa-btn' data-mesa='$m' aria-pressed='false'>Mesa $m</button>";
+                    } ?>
+                    <?php if (!$requiere_mesa): ?>
+                        <button type="button" class="mesa-btn mesa-mostrad-btn" data-mesa="0" aria-pressed="false">Mostrador</button>
+                    <?php endif; ?>
+                </div>
+                <p class="pos-service-selection">
+                    <span>Servicio actual</span>
+                    <strong><span id="current-mesa-text">Selecciona una mesa</span><span class="pos-selection-divider">·</span><span id="current-mesero-text"><?= $escape($meseros_pos[0]['nombre'] ?? '') ?></span></strong>
+                </p>
+            </section>
+        </div>
+        <div id="suspendida-selected" class="suspendida-checkout" role="dialog" aria-modal="true" aria-labelledby="suspendida-modal-title" style="display:none;">
+            <section class="suspendida-checkout-content">
+                <div class="pos-suspended-heading">
+                    <div>
+                        <span class="pos-section-kicker">DETALLE Y COBRO</span>
+                        <h2 id="suspendida-modal-title">Venta suspendida <span id="selected-venta-id"></span></h2>
+                    </div>
+                    <button type="button" id="cancelar-suspendida" class="pos-refresh-button" aria-label="Cerrar venta suspendida">×</button>
+                </div>
+                <div class="suspendida-sale-meta">
+                    <p>Mesero <strong id="selected-venta-mesero"></strong></p>
+                    <p>Mesa <strong id="selected-venta-mesa"></strong></p>
+                </div>
+                <div class="suspendida-add-products">
+                    <label for="suspendida-product-select">Agregar producto a la venta</label>
+                    <div>
+                        <select id="suspendida-product-select">
+                            <option value="">Selecciona un producto</option>
+                            <?php foreach ($menu as $item): ?>
+                                <option value="menu:<?= (int) $item['id'] ?>" data-id="<?= (int) $item['id'] ?>" data-tipo="menu" data-nombre="<?= $escape($item['nombre'] ?? '') ?>" data-precio="<?= $escape(number_format((float) ($item['precio'] ?? 0), 2, '.', '')) ?>" data-categoria="<?= $escape($item['categoria'] ?? '') ?>">
+                                    <?= $escape($item['nombre'] ?? '') ?> · $<?= $escape(number_format((float) ($item['precio'] ?? 0), 2)) ?>
+                                </option>
+                            <?php endforeach; ?>
+                            <?php foreach ($inventarioVenta as $item): ?>
+                                <option value="inventario:<?= (int) $item['id'] ?>" data-id="<?= (int) $item['id'] ?>" data-tipo="inventario" data-nombre="<?= $escape($item['item'] ?? '') ?>" data-precio="<?= $escape(number_format((float) ($item['precio_venta'] ?? 0), 2, '.', '')) ?>" data-categoria="<?= $escape($item['categoria'] ?? '') ?>" data-unidad="<?= $escape($item['unidad'] ?? 'pieza') ?>">
+                                    <?= $escape($item['item'] ?? '') ?> · $<?= $escape(number_format((float) ($item['precio_venta'] ?? 0), 2)) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                        <button id="suspendida-add-product" type="button">Agregar</button>
+                    </div>
+                </div>
+                <div class="suspendida-sale-items">
+                    <h3>Productos de la venta</h3>
                     <ul id="suspendida-orden-list"></ul>
-                    <h5>Productos agregados</h5>
+                    <h3>Productos nuevos</h3>
                     <ul id="suspendida-added-list"></ul>
-                    <div class="venta-resumen">
-                        <p>Subtotal: $<span id="suspendida-subtotal">0.00</span></p>
-                        <p>Descuento: $<span id="suspendida-discount">0.00</span></p>
-                        <p>Total final: $<span id="suspendida-total">0.00</span></p>
-                        <p>Items totales: <span id="suspendida-item-count">0</span></p>
-                    </div>
-                    <div class="venta-acciones">
-                        <label>Forma de pago:
-                            <select id="suspendida-tipo-pago">
-                                <?php foreach ($formas_pago as $forma) {
-                                    echo "<option value='" . htmlspecialchars($forma) . "'" . ($forma === $metodo_pago_default ? ' selected' : '') . ">" . htmlspecialchars($forma) . "</option>";
-                                } ?>
-                            </select>
-                        </label>
-                        <label>Monto pagado: <input type="number" id="suspendida-monto-pagado" min="0" step="0.01"
-                                value="0"></label>
-                        <label>Cambio: $<span id="suspendida-cambio">0.00</span></label>
-                        <label>Propina: $<input type="number" id="suspendida-propina" min="0" step="0.01"
-                                value="0"></label>
-                    </div>
-                    <div class="venta-acciones">
-                        <button id="imprimir-pre-recibo-suspendida">Imprimir Pre-Recibo</button>
-                        <button id="imprimir-cocina-suspendida">Imprimir Cocina</button>
-                        <button id="imprimir-barra-suspendida">Imprimir Barra</button>
-                    </div>
-                    <div class="venta-acciones">
-                        <button id="guardar-suspendida">Guardar cambios</button>
-                        <button id="completar-suspendida">Completar venta suspendida</button>
-                        <button id="cancelar-suspendida">Cerrar</button>
-                    </div>
                 </div>
-            </div>
+                <div class="venta-resumen">
+                    <p>Subtotal: $<span id="suspendida-subtotal">0.00</span></p>
+                    <p>Descuento: $<span id="suspendida-discount">0.00</span></p>
+                    <p>Total final: $<span id="suspendida-total">0.00</span></p>
+                    <p>Items totales: <span id="suspendida-item-count">0</span></p>
+                </div>
+                <div class="venta-acciones">
+                    <label>Forma de pago:
+                        <select id="suspendida-tipo-pago">
+                            <?php foreach ($formas_pago as $forma): ?>
+                                <option value="<?= $escape($forma) ?>" <?= $forma === $metodo_pago_default ? 'selected' : '' ?>><?= $escape($forma) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </label>
+                    <label>Monto pagado: <input type="number" id="suspendida-monto-pagado" min="0" step="0.01" value="0"></label>
+                    <label>Cambio: $<span id="suspendida-cambio">0.00</span></label>
+                    <label>Propina: $<input type="number" id="suspendida-propina" min="0" step="0.01" value="0"></label>
+                </div>
+                <div class="venta-acciones">
+                    <button id="imprimir-pre-recibo-suspendida" type="button">Imprimir pre-recibo</button>
+                    <button id="imprimir-cocina-suspendida" type="button">Imprimir cocina</button>
+                    <button id="imprimir-barra-suspendida" type="button">Imprimir barra</button>
+                </div>
+                <div class="venta-acciones">
+                    <button id="guardar-suspendida" type="button">Guardar cambios</button>
+                    <button id="completar-suspendida" type="button" class="suspended-checkout-primary">Completar venta y cobrar</button>
+                </div>
+            </section>
         </div>
         <!-- Modal de confirmación de venta -->
         <div id="confirm-modal" class="modal"
@@ -283,7 +390,7 @@ foreach ($inventarioVenta as $item) {
         </div>
     </main>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="2.js"></script>
+    <script src="utilidades.js"></script>
     <script>
         let orden = [];
         let mesaSeleccionada = null;
@@ -302,7 +409,9 @@ foreach ($inventarioVenta as $item) {
             'confirmarVenta' => !empty($config['pos_confirmar_venta']),
             'enfocarBusqueda' => !empty($config['pos_focus_search']),
             'ventasSuspendidas' => !empty($user['permisos']['ventas_suspendidas_ver']),
+            'suspendidaInicialId' => $suspendidaInicialId ?: null,
             'recibos' => $config_recibos,
+            'comandas' => $config_comandas,
             'impresoras' => $config_impresoras,
         ], JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT); ?>;
 
@@ -371,8 +480,7 @@ foreach ($inventarioVenta as $item) {
         }
 
         function actualizarSuspendidaCambio() {
-            const ordenCompleta = suspendidaOriginalOrder.concat(suspendidaAddedItems);
-            const total = calcularTotalFinal(ordenCompleta);
+            const total = Number(suspendidaTotalDisplay.textContent) || 0;
             const monto = parseFloat(suspendidaMontoPagadoInput.value) || 0;
             const cambio = document.getElementById('suspendida-tipo-pago').value === 'Efectivo' ? Math.max(0, monto - total) : 0;
             suspendidaCambioDisplay.textContent = cambio.toFixed(2);
@@ -403,17 +511,32 @@ foreach ($inventarioVenta as $item) {
             list.innerHTML = '';
             orden.forEach((item, index) => {
                 const li = document.createElement('li');
+                li.className = 'order-line';
                 const quantity = Math.max(1, parseInt(item.cantidad || 1, 10));
-                let itemText = quantity + ' x ' + item.nombre + ' - $' + item.precio.toFixed(2);
-                if (item.tipo === 'inventario') {
-                    itemText += ' / ' + (item.unidad || 'pieza');
-                }
+                const itemInfo = document.createElement('div');
+                itemInfo.className = 'order-line-info';
+                const itemName = document.createElement('strong');
+                itemName.className = 'order-line-name';
+                itemName.textContent = item.nombre;
+                const itemMeta = document.createElement('span');
+                itemMeta.className = 'order-line-meta';
+                itemMeta.textContent = quantity + ' × $' + item.precio.toFixed(2) +
+                    (item.tipo === 'inventario' ? ' / ' + (item.unidad || 'pieza') : '');
+                itemInfo.appendChild(itemName);
+                itemInfo.appendChild(itemMeta);
+                const lineTotal = document.createElement('strong');
+                lineTotal.className = 'order-line-total';
+                lineTotal.textContent = '$' + (quantity * item.precio).toFixed(2);
+                itemInfo.appendChild(lineTotal);
                 if (item.nota) {
-                    itemText += ' [Nota: ' + item.nota + ']';
+                    const itemNote = document.createElement('span');
+                    itemNote.className = 'order-line-note';
+                    itemNote.textContent = item.nota;
+                    itemInfo.appendChild(itemNote);
                 }
-                li.textContent = itemText;
 
                 const quantityInput = document.createElement('input');
+                quantityInput.className = 'order-line-quantity';
                 quantityInput.type = 'number';
                 quantityInput.min = '1';
                 quantityInput.max = '10000';
@@ -430,10 +553,36 @@ foreach ($inventarioVenta as $item) {
                     actualizarOrden();
                 });
 
+                const decreaseQuantity = document.createElement('button');
+                decreaseQuantity.type = 'button';
+                decreaseQuantity.className = 'order-line-stepper';
+                decreaseQuantity.textContent = '−';
+                decreaseQuantity.setAttribute('aria-label', 'Disminuir cantidad de ' + item.nombre);
+                decreaseQuantity.disabled = quantity <= 1;
+                decreaseQuantity.addEventListener('click', function () {
+                    if (quantity > 1) {
+                        orden[index].cantidad = quantity - 1;
+                        actualizarOrden();
+                    }
+                });
+                const increaseQuantity = document.createElement('button');
+                increaseQuantity.type = 'button';
+                increaseQuantity.className = 'order-line-stepper';
+                increaseQuantity.textContent = '+';
+                increaseQuantity.setAttribute('aria-label', 'Aumentar cantidad de ' + item.nombre);
+                increaseQuantity.disabled = quantity >= 10000;
+                increaseQuantity.addEventListener('click', function () {
+                    if (quantity < 10000) {
+                        orden[index].cantidad = quantity + 1;
+                        actualizarOrden();
+                    }
+                });
+
                 const editNote = document.createElement('button');
                 editNote.type = 'button';
                 editNote.textContent = 'Nota';
-                editNote.style.marginLeft = '5px';
+                editNote.className = 'order-line-note-button';
+                editNote.setAttribute('aria-label', 'Agregar nota a ' + item.nombre);
                 editNote.addEventListener('click', function () {
                     itemEditandoIndex = index;
                     document.getElementById('nota-item-nombre').textContent = item.nombre;
@@ -443,18 +592,22 @@ foreach ($inventarioVenta as $item) {
 
                 const remove = document.createElement('button');
                 remove.type = 'button';
-                remove.textContent = 'Quitar';
-                remove.style.marginLeft = '5px';
+                remove.textContent = '×';
+                remove.className = 'order-line-remove';
+                remove.setAttribute('aria-label', 'Quitar ' + item.nombre + ' del pedido');
                 remove.addEventListener('click', function () {
                     orden.splice(index, 1);
                     actualizarOrden();
                 });
-                li.appendChild(document.createTextNode(' Cantidad: '));
-                li.appendChild(quantityInput);
-                li.appendChild(document.createTextNode(' '));
-                li.appendChild(editNote);
-                li.appendChild(document.createTextNode(' '));
-                li.appendChild(remove);
+                const controls = document.createElement('div');
+                controls.className = 'order-line-controls';
+                controls.appendChild(decreaseQuantity);
+                controls.appendChild(quantityInput);
+                controls.appendChild(increaseQuantity);
+                controls.appendChild(editNote);
+                controls.appendChild(remove);
+                li.appendChild(itemInfo);
+                li.appendChild(controls);
                 list.appendChild(li);
             });
 
@@ -495,34 +648,80 @@ foreach ($inventarioVenta as $item) {
             actualizarEstadoMain();
         }
 
+        function crearArticuloEditable(item, index, esNuevo) {
+            const li = document.createElement('li');
+            li.className = 'suspendida-edit-item';
+            const name = document.createElement('span');
+            name.className = 'suspendida-edit-item-name';
+            const unit = item.tipo === 'inventario' ? ' / ' + (item.unidad || 'pieza') : '';
+            name.textContent = (item.nombre || 'Artículo') + ' · $' + (Number(item.precio) || 0).toFixed(2) + unit;
+
+            const controls = document.createElement('div');
+            controls.className = 'suspendida-edit-controls';
+            const quantity = document.createElement('input');
+            quantity.type = 'number';
+            quantity.min = '1';
+            quantity.max = '10000';
+            quantity.step = '1';
+            quantity.value = String(Math.max(1, Number.parseInt(item.cantidad || 1, 10)));
+            quantity.setAttribute('aria-label', 'Cantidad de ' + (item.nombre || 'artículo'));
+            quantity.addEventListener('change', function () {
+                const value = Number.parseInt(this.value, 10);
+                if (!Number.isInteger(value) || value < 1 || value > 10000) {
+                    this.value = String(Math.max(1, Number.parseInt(item.cantidad || 1, 10)));
+                    return;
+                }
+                item.cantidad = value;
+                actualizarSuspendidaOrden();
+            });
+
+            const note = document.createElement('input');
+            note.type = 'text';
+            note.maxLength = 500;
+            note.placeholder = 'Nota opcional';
+            note.value = item.nota || '';
+            note.setAttribute('aria-label', 'Nota de ' + (item.nombre || 'artículo'));
+            note.addEventListener('change', function () {
+                item.nota = this.value.trim();
+            });
+
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.textContent = 'Quitar';
+            remove.addEventListener('click', function () {
+                if (esNuevo) {
+                    suspendidaAddedItems.splice(index, 1);
+                } else {
+                    suspendidaOriginalOrder.splice(index, 1);
+                }
+                actualizarSuspendidaOrden();
+            });
+            controls.append(quantity, note, remove);
+            li.append(name, controls);
+            return li;
+        }
+
+        function obtenerEdicionesArticulosExistentes() {
+            return suspendidaOriginalOrder.map(item => ({
+                indice: item.indiceOriginal,
+                cantidad: Math.max(1, Number.parseInt(item.cantidad || 1, 10)),
+                nota: item.nota || ''
+            }));
+        }
+
         function actualizarSuspendidaOrden() {
             suspendidaOrdenList.innerHTML = '';
             suspendidaAddedList.innerHTML = '';
-            suspendidaOriginalOrder.forEach(item => {
-                const li = document.createElement('li');
-                li.textContent = Math.max(1, parseInt(item.cantidad || 1, 10)) + ' x ' + item.nombre + ' - $' + parseFloat(item.precio).toFixed(2);
-                if (item.tipo === 'inventario') {
-                    li.textContent += ' / ' + (item.unidad || 'pieza');
-                }
-                suspendidaOrdenList.appendChild(li);
+            if (!suspendidaOriginalOrder.length) {
+                const empty = document.createElement('li');
+                empty.textContent = 'No hay productos originales; agrega productos para continuar.';
+                suspendidaOrdenList.appendChild(empty);
+            }
+            suspendidaOriginalOrder.forEach((item, index) => {
+                suspendidaOrdenList.appendChild(crearArticuloEditable(item, index, false));
             });
             suspendidaAddedItems.forEach((item, index) => {
-                const li = document.createElement('li');
-                li.textContent = Math.max(1, parseInt(item.cantidad || 1, 10)) + ' x ' + item.nombre + ' - $' + item.precio.toFixed(2);
-                if (item.tipo === 'inventario') {
-                    li.textContent += ' / ' + (item.unidad || 'pieza');
-                }
-                const remove = document.createElement('button');
-                remove.type = 'button';
-                remove.textContent = 'Quitar';
-                remove.addEventListener('click', function () {
-                    suspendidaAddedItems.splice(index, 1);
-                    actualizarSuspendidaOrden();
-                    actualizarSuspendidaCambio();
-                });
-                li.appendChild(document.createTextNode(' '));
-                li.appendChild(remove);
-                suspendidaAddedList.appendChild(li);
+                suspendidaAddedList.appendChild(crearArticuloEditable(item, index, true));
             });
 
             const ordenCompleta = suspendidaOriginalOrder.concat(suspendidaAddedItems);
@@ -530,8 +729,9 @@ foreach ($inventarioVenta as $item) {
             const descuento = obtenerDescuentoPromocion(subtotal).monto;
 
             const totalFinal = Math.max(0, subtotal - descuento);
-            const totalConImpuesto = totalFinal + (totalFinal * (impuesto / 100));
+            const totalConImpuesto = Math.round((totalFinal + (totalFinal * (impuesto / 100))) * 100) / 100;
 
+            suspendidaMontoPagadoInput.value = totalConImpuesto.toFixed(2);
             document.getElementById('suspendida-subtotal').textContent = subtotal.toFixed(2);
             document.getElementById('suspendida-discount').textContent = descuento.toFixed(2);
             suspendidaTotalDisplay.textContent = totalConImpuesto.toFixed(2);
@@ -630,8 +830,12 @@ foreach ($inventarioVenta as $item) {
             btn.addEventListener('click', function () {
                 mesaSeleccionada = this.dataset.mesa;
                 currentMesaText.textContent = mesaSeleccionada === '0' ? 'Mostrador' : 'Mesa ' + mesaSeleccionada;
-                document.querySelectorAll('.mesa-btn').forEach(mesa => mesa.classList.remove('selected'));
+                document.querySelectorAll('.mesa-btn').forEach(mesa => {
+                    mesa.classList.remove('selected');
+                    mesa.setAttribute('aria-pressed', 'false');
+                });
                 this.classList.add('selected');
+                this.setAttribute('aria-pressed', 'true');
                 actualizarEstadoMain();
             });
         });
@@ -664,18 +868,43 @@ foreach ($inventarioVenta as $item) {
             const searchTerm = document.getElementById('menu-search').value.toLowerCase();
             const categoriaSeleccionada = document.getElementById('menu-categoria').value;
             const menuItems = document.querySelectorAll('.menu-item');
+            let visibleCount = 0;
+            let visibleInventoryCount = 0;
 
             menuItems.forEach(item => {
                 const nombre = item.dataset.nombre.toLowerCase();
                 const categoria = item.dataset.categoria || '';
                 const matchesSearch = nombre.includes(searchTerm);
                 const matchesCategoria = !categoriaSeleccionada || categoria === categoriaSeleccionada;
-                item.style.display = matchesSearch && matchesCategoria ? 'block' : 'none';
+                const visible = matchesSearch && matchesCategoria;
+                item.hidden = !visible;
+                if (visible) {
+                    visibleCount++;
+                    if (item.classList.contains('inventory-sale-item')) {
+                        visibleInventoryCount++;
+                    }
+                }
+            });
+            document.getElementById('menu-result-count').textContent = String(visibleCount);
+            const inventoryHeading = document.querySelector('.pos-inventory-heading');
+            if (inventoryHeading) {
+                inventoryHeading.hidden = visibleInventoryCount === 0;
+            }
+            document.querySelectorAll('.pos-category-chip').forEach(chip => {
+                const selected = chip.dataset.category === categoriaSeleccionada;
+                chip.classList.toggle('active', selected);
+                chip.setAttribute('aria-pressed', selected ? 'true' : 'false');
             });
         }
 
         document.getElementById('menu-search').addEventListener('input', filtrarMenu);
         document.getElementById('menu-categoria').addEventListener('change', filtrarMenu);
+        document.querySelectorAll('.pos-category-chip').forEach(chip => {
+            chip.addEventListener('click', function () {
+                document.getElementById('menu-categoria').value = this.dataset.category;
+                filtrarMenu();
+            });
+        });
 
         tipoPagoSelect.addEventListener('change', function () {
             const total = calcularTotalFinal();
@@ -717,16 +946,12 @@ foreach ($inventarioVenta as $item) {
             const descuento = obtenerDescuentoPromocion(subtotal).monto;
 
             const totalFinal = Math.max(0, subtotal - descuento);
-            const totalConImpuesto = totalFinal + (totalFinal * (impuesto / 100));
-
-            if (this.value !== 'Efectivo') {
-                suspendidaMontoPagadoInput.value = totalConImpuesto.toFixed(2);
-                suspendidaMontoPagadoInput.disabled = true;
-            } else {
-                suspendidaMontoPagadoInput.disabled = false;
-            }
+            const totalConImpuesto = Math.round((totalFinal + (totalFinal * (impuesto / 100))) * 100) / 100;
+            suspendidaMontoPagadoInput.value = totalConImpuesto.toFixed(2);
+            suspendidaMontoPagadoInput.disabled = this.value !== 'Efectivo';
             actualizarSuspendidaCambio();
         });
+        suspendidaMontoPagadoInput.addEventListener('input', actualizarSuspendidaCambio);
 
         btnLimpiarOrden.addEventListener('click', function () {
             resetOrdenActual();
@@ -736,6 +961,17 @@ foreach ($inventarioVenta as $item) {
 
         btnCancelarSuspendida.addEventListener('click', function () {
             resetSuspendidaSelection();
+            if (configuracionPOS.suspendidaInicialId) {
+                window.history.replaceState(null, '', 'pos.php');
+            }
+        });
+        suspendidaSelectedSection.addEventListener('click', function (event) {
+            if (event.target === suspendidaSelectedSection) {
+                resetSuspendidaSelection();
+                if (configuracionPOS.suspendidaInicialId) {
+                    window.history.replaceState(null, '', 'pos.php');
+                }
+            }
         });
 
         document.getElementById('suspender').addEventListener('click', function () {
@@ -775,7 +1011,6 @@ foreach ($inventarioVenta as $item) {
                         imprimirPreRecibo(ordenParaImprimir, subtotal, descuento, total, contextoImpresion);
                         imprimirComandaCocina(ordenParaImprimir, contextoImpresion);
                         imprimirComandaBarra(ordenParaImprimir, contextoImpresion);
-                        buscarSuspendidas();
                     } else {
                         alert(data.message || 'Error al suspender la venta');
                     }
@@ -996,51 +1231,68 @@ foreach ($inventarioVenta as $item) {
             actualizarPropinaTipo();
         });
 
-        document.getElementById('buscar-suspendidas').addEventListener('click', buscarSuspendidas);
-
-        function buscarSuspendidas() {
-            if (!configuracionPOS.ventasSuspendidas) return;
-            const search = document.getElementById('search-suspendidas').value;
-            fetch('buscar_suspendidas.php?search=' + encodeURIComponent(search))
-                .then(response => response.json())
+        function abrirSuspendidaInicial() {
+            const saleId = Number(configuracionPOS.suspendidaInicialId);
+            if (!saleId || !configuracionPOS.ventasSuspendidas) return;
+            fetch('buscar_suspendidas.php')
+                .then(response => {
+                    if (!response.ok) throw new Error('No se pudieron consultar las ventas en espera.');
+                    return response.json();
+                })
                 .then(data => {
-                    const container = document.getElementById('suspendidas-results');
-                    container.innerHTML = '';
-                    if (data.status !== 'ok') {
-                        container.textContent = 'Error en la búsqueda.';
+                    if (data.status !== 'ok' || !Array.isArray(data.ventas)) {
+                        throw new Error(data.message || 'La respuesta del servidor no contiene ventas.');
+                    }
+                    const sale = data.ventas.find(venta => Number(venta.id) === saleId);
+                    if (!sale) {
+                        alert('La venta en espera ya no existe o fue completada.');
                         return;
                     }
-                    if (!data.ventas.length) {
-                        container.textContent = 'No se encontraron ventas suspendidas.';
-                        return;
-                    }
-                    data.ventas.forEach(venta => {
-                        const div = document.createElement('div');
-                        div.className = 'suspendida-item';
-                        const ubicacion = Number(venta.mesa) === 0 ? 'Mostrador' : `Mesa ${venta.mesa}`;
-                        div.innerHTML = `<strong>ID ${venta.id}</strong> - ${ubicacion} - Mesero ${venta.mesero_nombre || 'N/A'} - Items: ${venta.orden.length}`;
-                        const editar = document.createElement('button');
-                        editar.type = 'button';
-                        editar.textContent = 'Abrir';
-                        editar.addEventListener('click', function () {
-                            cargarSuspendida(venta);
-                        });
-                        div.appendChild(editar);
-                        container.appendChild(div);
-                    });
-                });
+                    cargarSuspendida(sale);
+                })
+                .catch(error => alert(error.message || 'No se pudo abrir la venta en espera.'));
         }
 
         function cargarSuspendida(venta) {
             editingSuspendidaId = venta.id;
-            suspendidaOriginalOrder = Array.isArray(venta.orden) ? venta.orden : [];
+            suspendidaOriginalOrder = Array.isArray(venta.orden)
+                ? venta.orden
+                    .map((item, index) => item && typeof item === 'object' && !Array.isArray(item)
+                        ? { ...item, indiceOriginal: index }
+                        : null)
+                    .filter(item => item !== null)
+                : [];
             suspendidaAddedItems = [];
             selectedVentaId.textContent = venta.id;
             selectedVentaMesero.textContent = venta.mesero_nombre || 'N/A';
             selectedVentaMesa.textContent = Number(venta.mesa) === 0 ? 'Mostrador' : venta.mesa;
-            suspendidaSelectedSection.style.display = 'block';
+            suspendidaSelectedSection.style.display = 'flex';
             actualizarSuspendidaOrden();
+            document.getElementById('suspendida-tipo-pago').focus();
         }
+
+        document.getElementById('suspendida-add-product').addEventListener('click', function () {
+            const select = document.getElementById('suspendida-product-select');
+            const option = select.selectedOptions[0];
+            if (!option || !option.value) {
+                alert('Selecciona un producto para agregar a la venta.');
+                return;
+            }
+            const item = {
+                id: option.dataset.id,
+                tipo: option.dataset.tipo || 'menu',
+                nombre: option.dataset.nombre || '',
+                precio: Number(option.dataset.precio) || 0,
+                categoria: option.dataset.categoria || '',
+                cantidad: 1
+            };
+            if (item.tipo === 'inventario') {
+                item.unidad = option.dataset.unidad || 'pieza';
+            }
+            suspendidaAddedItems.push(item);
+            select.value = '';
+            actualizarSuspendidaOrden();
+        });
 
         document.getElementById('guardar-suspendida').addEventListener('click', function () {
             if (!editingSuspendidaId) {
@@ -1052,11 +1304,17 @@ foreach ($inventarioVenta as $item) {
             fetch('editar_suspendida.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-                body: JSON.stringify({ id: editingSuspendidaId, nuevos_items: suspendidaAddedItems, csrf_token: csrfToken })
+                body: JSON.stringify({
+                    id: editingSuspendidaId,
+                    items_existentes: obtenerEdicionesArticulosExistentes(),
+                    nuevos_items: suspendidaAddedItems,
+                    csrf_token: csrfToken
+                })
             })
                 .then(response => response.json())
                 .then(data => {
                     if (data.status === 'ok') {
+                        const saleId = editingSuspendidaId;
                         if (nuevos.length) {
                             imprimirComandaCocina(nuevos, contextoImpresion);
                             imprimirComandaBarra(nuevos, contextoImpresion);
@@ -1069,8 +1327,7 @@ foreach ($inventarioVenta as $item) {
                         selectedVentaMesero.textContent = '';
                         selectedVentaMesa.textContent = '';
                         actualizarSuspendidaOrden();
-                        alert('Venta suspendida actualizada. Ahora puede iniciar una nueva venta.');
-                        buscarSuspendidas();
+                        window.location.href = 'ventas_suspendidas.php?actualizada=' + encodeURIComponent(saleId);
                     } else {
                         alert(data.message || 'Error al actualizar suspensión.');
                     }
@@ -1084,7 +1341,7 @@ foreach ($inventarioVenta as $item) {
             }
             const tipoPago = document.getElementById('suspendida-tipo-pago').value;
             const propina = parseFloat(document.getElementById('suspendida-propina').value) || 0;
-            const montoPagado = parseFloat(document.getElementById('suspendida-monto-pagado').value) || 0;
+            const montoPagadoInput = document.getElementById('suspendida-monto-pagado');
             const ordenCompleta = suspendidaOriginalOrder.concat(suspendidaAddedItems);
             const contextoImpresion = obtenerContextoImpresion();
             const subtotal = calcularTotal(ordenCompleta);
@@ -1092,7 +1349,11 @@ foreach ($inventarioVenta as $item) {
             const descuento = Math.min(subtotal, promocion.monto);
             const subtotalConDescuento = Math.max(0, subtotal - descuento);
             const impuestoCalculado = subtotalConDescuento * (impuesto / 100);
-            const total = subtotalConDescuento + impuestoCalculado;
+            const total = Math.round((subtotalConDescuento + impuestoCalculado) * 100) / 100;
+            if (tipoPago === 'Efectivo' && !montoPagadoInput.value) {
+                montoPagadoInput.value = total.toFixed(2);
+            }
+            const montoPagado = Number(montoPagadoInput.value) || 0;
             if (!tipoPago) {
                 alert('Seleccione una forma de pago para completar la venta.');
                 return;
@@ -1104,7 +1365,16 @@ foreach ($inventarioVenta as $item) {
             fetch('completar_suspendida.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-                body: JSON.stringify({ id: editingSuspendidaId, tipo_pago: tipoPago, propina: propina, monto_pagado: montoPagado, descuento: descuento, nuevos_items: suspendidaAddedItems, csrf_token: csrfToken })
+                body: JSON.stringify({
+                    id: editingSuspendidaId,
+                    tipo_pago: tipoPago,
+                    propina: propina,
+                    monto_pagado: montoPagado,
+                    descuento: descuento,
+                    items_existentes: obtenerEdicionesArticulosExistentes(),
+                    nuevos_items: suspendidaAddedItems,
+                    csrf_token: csrfToken
+                })
             })
                 .then(response => response.json())
                 .then(data => {
@@ -1126,7 +1396,7 @@ foreach ($inventarioVenta as $item) {
                             false
                         );
                         alert('Venta suspendida completada correctamente.');
-                        buscarSuspendidas();
+                        window.history.replaceState(null, '', 'pos.php');
                     } else {
                         alert(data.message || 'Error al completar venta suspendida.');
                     }
@@ -1183,7 +1453,7 @@ foreach ($inventarioVenta as $item) {
             });
         }
 
-        buscarSuspendidas();
+        abrirSuspendidaInicial();
 
         // Propina buttons
         document.querySelectorAll('.tip-btn').forEach(btn => {
@@ -1197,23 +1467,38 @@ foreach ($inventarioVenta as $item) {
         });
 
         // Funciones de impresión
-        function crearVentanaImpresion(titulo, contenido) {
+        function crearVentanaImpresion(titulo, contenido, esRecibo = false) {
             const win = window.open('', '_blank');
             if (!win) {
                 alert('No se pudo abrir la ventana de impresión. Verifique el bloqueador de ventanas emergentes.');
                 return false;
             }
-            win.document.write(`<!DOCTYPE html><html><head><title>${titulo}</title><style>
-                body { font-family: Arial, sans-serif; font-size: 12px; margin: 0; padding: 10px; width: 80mm; }
+            const opciones = configuracionPOS.recibos;
+            const formato = esRecibo ? opciones : configuracionPOS.comandas;
+            const anchoPapel = formato.anchoPapel === 58 ? 58 : 80;
+            const tamanoFuente = { pequena: '10px', normal: '12px', grande: '14px' }[formato.tamanoFuente] || '12px';
+            const alturaMinima = esRecibo ? Math.max(100, Math.min(500, opciones.altoPapel || 200)) : 200;
+            const margenSuperior = Math.max(0, Math.min(20, formato.margenSuperior || 0));
+            const margenInferior = Math.max(0, Math.min(20, formato.margenInferior || 0));
+            win.document.write(`<!DOCTYPE html><html><head><title>${escaparHtmlImpresion(titulo)}</title><style id="print-page"></style><style>
+                * { box-sizing: border-box; }
+                html, body { margin: 0; padding: 0; width: ${anchoPapel}mm; overflow: visible; }
+                body { font-family: Arial, sans-serif; font-size: ${tamanoFuente}; line-height: 1.35; overflow-wrap: anywhere; }
+                #receipt-print-content { min-height: ${alturaMinima}mm; padding: ${margenSuperior}mm 2mm ${margenInferior}mm; }
                 .center { text-align: center; }
                 .separator { border-top: 1px dashed #000; margin: 8px 0; }
-                .small { font-size: 11px; }
+                .small { font-size: .9em; }
                 .items { margin: 8px 0; }
                 .items div { margin-bottom: 4px; }
                 .footer { margin-top: 10px; }
-            </style></head><body>${contenido}</body></html>`);
+            </style></head><body><div id="receipt-print-content">${contenido}</div></body></html>`);
             win.document.close();
             win.focus();
+            const receiptContent = win.document.getElementById('receipt-print-content');
+            const contentHeightMm = receiptContent.getBoundingClientRect().height * 25.4 / 96;
+            const pageHeightMm = Math.max(alturaMinima, Math.ceil(contentHeightMm + 8));
+            win.document.getElementById('print-page').textContent =
+                `@page { size: ${anchoPapel}mm ${pageHeightMm}mm; margin: 0; }`;
             win.print();
             return true;
         }
@@ -1228,11 +1513,15 @@ foreach ($inventarioVenta as $item) {
             })[caracter]);
         }
 
-        function generarItemsHtml(orden) {
+        function generarItemsHtml(orden, esRecibo = false) {
             return orden.map(item => {
                 const nombre = escaparHtmlImpresion(item.nombre);
-                const precio = configuracionPOS.recibos.mostrarPrecios ? ' - $' + parseFloat(item.precio).toFixed(2) : '';
-                const nota = item.nota ? `<small>Nota: ${escaparHtmlImpresion(item.nota)}</small>` : '';
+                const precio = (!esRecibo || configuracionPOS.recibos.mostrarPrecios)
+                    ? ' - $' + parseFloat(item.precio).toFixed(2)
+                    : '';
+                const nota = (!esRecibo || configuracionPOS.recibos.mostrarNotas) && item.nota
+                    ? `<small>Nota: ${escaparHtmlImpresion(item.nota)}</small>`
+                    : '';
                 return `<div>${parseInt(item.cantidad || 1, 10)} x ${nombre}${precio}${nota}</div>`;
             }).join('');
         }
@@ -1277,50 +1566,54 @@ foreach ($inventarioVenta as $item) {
 
         function imprimirPreRecibo(orden, subtotal, descuento, total, contexto = obtenerContextoImpresion()) {
             const opciones = configuracionPOS.recibos;
+            const titulo = escaparHtmlImpresion(opciones.titulo);
+            const pie = escaparHtmlImpresion(opciones.pie);
             const impuestoCalculado = Math.max(0, subtotal - descuento) * (impuesto / 100);
             const contenido = `
-                <div class="center"><strong>${opciones.titulo} · PRE-RECIBO</strong></div>
+                <div class="center"><strong>${titulo} · PRE-RECIBO</strong></div>
                 <div class="separator"></div>
                 ${opciones.mostrarFecha ? `<div>Fecha: ${new Date().toLocaleString()}</div>` : ''}
-                <div>Mesa: ${contexto.mesa === '0' ? 'Mostrador' : escaparHtmlImpresion(contexto.mesa)}</div>
-                <div>Mesero: ${escaparHtmlImpresion(contexto.mesero)}</div>
+                ${opciones.mostrarMesa ? `<div>Mesa: ${contexto.mesa === '0' ? 'Mostrador' : escaparHtmlImpresion(contexto.mesa)}</div>` : ''}
+                ${opciones.mostrarMesero ? `<div>Mesero: ${escaparHtmlImpresion(contexto.mesero)}</div>` : ''}
                 <div class="separator"></div>
-                <div class="items">${generarItemsHtml(orden)}</div>
+                <div class="items">${generarItemsHtml(orden, true)}</div>
                 <div class="separator"></div>
-                <div>Subtotal: $${subtotal.toFixed(2)}</div>
+                ${opciones.mostrarSubtotal ? `<div>Subtotal: $${subtotal.toFixed(2)}</div>` : ''}
                 ${opciones.mostrarDescuentos && descuento > 0 ? `<div>Descuento: $${descuento.toFixed(2)}</div>` : ''}
                 ${opciones.mostrarImpuestos && impuestoCalculado > 0 ? `<div>Impuesto: $${impuestoCalculado.toFixed(2)}</div>` : ''}
                 <div><strong>Total: $${total.toFixed(2)}</strong></div>
-                <div class="footer center small">${opciones.pie}</div>
+                <div class="footer center small">${pie}</div>
             `;
             enviarTrabajoImpresion('recibo', orden, contexto, {
                 pre_recibo: true,
                 descuento,
                 impuesto: impuestoCalculado
-            }, () => crearVentanaImpresion(opciones.titulo + ' - Pre-Recibo', contenido));
+            }, () => crearVentanaImpresion(opciones.titulo + ' - Pre-Recibo', contenido, true));
         }
 
         function imprimirRecibo(id, orden, subtotal, descuento, total, tipoPago, montoPagado, cambio, contexto = obtenerContextoImpresion(), imprimirComandas = true) {
             const opciones = configuracionPOS.recibos;
+            const titulo = escaparHtmlImpresion(opciones.titulo);
+            const pie = escaparHtmlImpresion(opciones.pie);
             const impuestoCalculado = Math.max(0, subtotal - descuento) * (impuesto / 100);
             const contenido = `
-                <div class="center"><strong>${opciones.titulo}</strong></div>
+                <div class="center"><strong>${titulo}</strong></div>
                 <div class="center"><strong>RECIBO</strong></div>
                 <div class="separator"></div>
-                <div>ID Venta: ${id}</div>
+                ${opciones.mostrarFolio ? `<div>ID Venta: ${id}</div>` : ''}
                 ${opciones.mostrarFecha ? `<div>Fecha: ${new Date().toLocaleString()}</div>` : ''}
-                <div>Mesa: ${contexto.mesa === '0' ? 'Mostrador' : escaparHtmlImpresion(contexto.mesa)}</div>
-                <div>Mesero: ${escaparHtmlImpresion(contexto.mesero)}</div>
+                ${opciones.mostrarMesa ? `<div>Mesa: ${contexto.mesa === '0' ? 'Mostrador' : escaparHtmlImpresion(contexto.mesa)}</div>` : ''}
+                ${opciones.mostrarMesero ? `<div>Mesero: ${escaparHtmlImpresion(contexto.mesero)}</div>` : ''}
                 <div class="separator"></div>
-                <div class="items">${generarItemsHtml(orden)}</div>
+                <div class="items">${generarItemsHtml(orden, true)}</div>
                 <div class="separator"></div>
-                <div>Subtotal: $${subtotal.toFixed(2)}</div>
+                ${opciones.mostrarSubtotal ? `<div>Subtotal: $${subtotal.toFixed(2)}</div>` : ''}
                 ${opciones.mostrarDescuentos && descuento > 0 ? `<div>Descuento: $${descuento.toFixed(2)}</div>` : ''}
                 ${opciones.mostrarImpuestos && impuestoCalculado > 0 ? `<div>Impuesto: $${impuestoCalculado.toFixed(2)}</div>` : ''}
                 <div><strong>Total: $${total.toFixed(2)}</strong></div>
-                <div>Forma de Pago: ${tipoPago}</div>
-                ${tipoPago === 'Efectivo' ? `<div>Monto Pagado: $${montoPagado.toFixed(2)}</div><div>Cambio: $${cambio.toFixed(2)}</div>` : ''}
-                <div class="footer center small">${opciones.pie}</div>
+                ${opciones.mostrarPago ? `<div>Forma de Pago: ${escaparHtmlImpresion(tipoPago)}</div>
+                ${tipoPago === 'Efectivo' ? `<div>Monto Pagado: $${montoPagado.toFixed(2)}</div><div>Cambio: $${cambio.toFixed(2)}</div>` : ''}` : ''}
+                <div class="footer center small">${pie}</div>
             `;
             enviarTrabajoImpresion('recibo', orden, contexto, {
                 venta_id: id,
@@ -1328,7 +1621,7 @@ foreach ($inventarioVenta as $item) {
                 impuesto: impuestoCalculado,
                 tipo_pago: tipoPago,
                 monto_pagado: montoPagado
-            }, () => crearVentanaImpresion(opciones.titulo + ' - Recibo', contenido));
+            }, () => crearVentanaImpresion(opciones.titulo + ' - Recibo', contenido, true));
             if (imprimirComandas) {
                 imprimirComandaCocina(orden, contexto);
                 imprimirComandaBarra(orden, contexto);

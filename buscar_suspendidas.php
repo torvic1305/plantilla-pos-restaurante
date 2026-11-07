@@ -7,12 +7,21 @@ if (!isset($_SESSION['user'])) {
     echo json_encode(['status' => 'error', 'message' => 'No autorizado']);
     exit;
 }
-$search = trim($_GET['search'] ?? '');
-$ventas = getVentasSuspendidas($search);
-foreach ($ventas as &$venta) {
-    $orden = json_decode($venta['orden'], true);
-    $venta['orden'] = is_array($orden) ? $orden : [];
+$searchInput = $_GET['search'] ?? '';
+$search = is_string($searchInput) ? trim($searchInput) : '';
+try {
+    $ventas = getVentasSuspendidas($search);
+    foreach ($ventas as &$venta) {
+        $orden = json_decode($venta['orden'], true);
+        $venta['orden'] = is_array($orden) ? $orden : [];
+    }
+    unset($venta);
+    header('Content-Type: application/json');
+    echo json_encode(['status' => 'ok', 'ventas' => $ventas]);
+} catch (Throwable $e) {
+    error_log('Unable to load suspended sales: ' . $e->getMessage());
+    http_response_code(500);
+    header('Content-Type: application/json');
+    echo json_encode(['status' => 'error', 'message' => 'No se pudieron cargar las ventas en espera.']);
 }
-header('Content-Type: application/json');
-echo json_encode(['status' => 'ok', 'ventas' => $ventas]);
 ?>

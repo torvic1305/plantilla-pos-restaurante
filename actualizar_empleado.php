@@ -19,7 +19,7 @@ if ($id === null) {
     exit;
 }
 
-$stmt = $pdo->prepare('SELECT usuario, rol FROM empleados WHERE id = ?');
+$stmt = $pdo->prepare('SELECT usuario, rol FROM empleados WHERE id = ? AND eliminado_en IS NULL');
 $stmt->execute([$id]);
 $target = $stmt->fetch(PDO::FETCH_ASSOC);
 if (!$target || $target['usuario'] === 'super') {

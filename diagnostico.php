@@ -57,7 +57,7 @@ if ($pdo instanceof PDO) {
 
 // 5. Verificar files
 echo "<h3>2. Archivos del sistema:</h3>";
-$files = ['1.php', 'index.php', 'dashboard.php', 'data.php', 'style.php', 'config.json'];
+$files = ['login.php', 'index.php', 'dashboard.php', 'data.php', 'style.php', 'config.json'];
 foreach ($files as $file) {
     if (file_exists($file)) {
         echo "✓ " . $file . "<br>";

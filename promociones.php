@@ -42,7 +42,7 @@ requirePermission('promociones');
             <button type="submit">Agregar</button>
         </form>
     </main>
-    <script src="2.js"></script>
+    <script src="utilidades.js"></script>
 </body>
 
 </html>

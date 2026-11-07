@@ -111,6 +111,7 @@ $navigation = [
     ['Menú', 'menu.php', '☷', $permissions['menu_ver'] ?? false],
     ['Clientes', 'clientes.php', '♙', $permissions['clientes_ver'] ?? false],
     ['Inventario', 'inventario.php', '▤', true],
+    ['Compras', 'compras.php', '▧', $permissions['inventario_ver'] ?? false],
     ['Empleados', 'empleados.php', '♧', $permissions['empleados'] ?? false],
     ['Informes', 'informes.php', '▥', $permissions['informes'] ?? false],
     ['Propinas', 'propinas.php', '$', $permissions['propinas'] ?? false],
@@ -184,6 +185,7 @@ $searchLabels = [
                 <?php if ($canEditInventory): ?>
                     <a class="inventory-new-button" href="inventario.php?new=1#inventory-form">+ Nuevo artículo</a>
                 <?php endif; ?>
+                <a class="inventory-new-button" href="compras.php">Compras</a>
                 <a class="button-secondary inventory-dashboard-link" href="dashboard.php" aria-label="Volver al panel">···</a>
             </div>
         </div>
@@ -346,7 +348,7 @@ $searchLabels = [
         <?php endif; ?>
         </main>
     </div>
-    <script src="2.js"></script>
+    <script src="utilidades.js"></script>
 </body>
 
 </html>

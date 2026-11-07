@@ -50,10 +50,16 @@ try {
         $orden = [];
     }
 
-    $nuevos_items = isset($data['nuevos_items']) && is_array($data['nuevos_items'])
-        ? normalizeMenuOrderItems($data['nuevos_items'])
-        : [];
-    $orden_actualizada = array_merge($orden, $nuevos_items);
+    $nuevos_items = $data['nuevos_items'] ?? [];
+    if (!is_array($nuevos_items)) {
+        throw new Exception('Lista de productos nuevos inválida.');
+    }
+    if (array_key_exists('items_existentes', $data)) {
+        $orden_actualizada = updateSuspendedOrderItems($orden, $data['items_existentes'], $nuevos_items);
+    } else {
+        $normalizedNewItems = normalizeMenuOrderItems($nuevos_items);
+        $orden_actualizada = array_merge($orden, $normalizedNewItems);
+    }
 
     $propina = validateDecimal($data['propina'] ?? 0, 0, 10000);
     if ($propina === null) {

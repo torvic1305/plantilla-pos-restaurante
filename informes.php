@@ -204,7 +204,7 @@ foreach ($ventasSuspendidas as $v) {
             doc.save('pre-recibo-suspendida.pdf');
         }
     </script>
-    <script src="2.js"></script>
+    <script src="utilidades.js"></script>
 </body>
 
 </html>

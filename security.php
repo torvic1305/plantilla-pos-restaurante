@@ -134,6 +134,17 @@ function requirePermission($permiso)
         exit;
     }
 
+    $employeeState = getEstadoEmpleado((int) $_SESSION['user']['id']);
+    if (
+        !$employeeState
+        || !empty($employeeState['suspendido'])
+        || $employeeState['eliminado_en'] !== null
+    ) {
+        http_response_code(403);
+        echo 'La cuenta de este empleado está suspendida o archivada. Contacte a un gerente.';
+        exit;
+    }
+
     try {
         $permisos = getPermisos((int) $_SESSION['user']['id']);
     } catch (PDOException $e) {

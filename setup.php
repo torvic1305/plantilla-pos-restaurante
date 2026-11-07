@@ -171,6 +171,9 @@ try {
     // Agregar columnas si no existen (para actualizaciones)
     ensureColumn($pdo, 'empleados', 'permisos', 'JSON NULL');
     ensureColumn($pdo, 'empleados', 'configuraciones', 'JSON NULL');
+    ensureColumn($pdo, 'empleados', 'suspendido', 'TINYINT(1) NOT NULL DEFAULT 0');
+    ensureColumn($pdo, 'empleados', 'motivo_suspension', 'VARCHAR(255) NULL');
+    ensureColumn($pdo, 'empleados', 'eliminado_en', 'DATETIME NULL');
 
     // Tabla menu
     $pdo->exec("CREATE TABLE IF NOT EXISTS menu (
@@ -287,6 +290,31 @@ try {
         CONSTRAINT fk_movimientos_inventario_venta FOREIGN KEY (venta_id) REFERENCES ventas(id) ON DELETE SET NULL,
         CONSTRAINT fk_movimientos_inventario_usuario FOREIGN KEY (usuario_id) REFERENCES empleados(id) ON DELETE SET NULL
     )");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS compras (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        proveedor VARCHAR(255) NOT NULL,
+        folio VARCHAR(100) NULL,
+        fecha_compra DATE NOT NULL,
+        total DECIMAL(12,2) NOT NULL DEFAULT 0,
+        observaciones TEXT NULL,
+        usuario_id INT NULL,
+        creado TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_compras_fecha (fecha_compra, id),
+        CONSTRAINT fk_compras_usuario FOREIGN KEY (usuario_id) REFERENCES empleados(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS compra_detalles (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        compra_id BIGINT NOT NULL,
+        inventario_id INT NOT NULL,
+        item_nombre VARCHAR(255) NOT NULL,
+        cantidad DECIMAL(12,3) NOT NULL,
+        costo_unitario DECIMAL(10,2) NOT NULL,
+        subtotal DECIMAL(12,2) NOT NULL,
+        KEY idx_compra_detalles_compra (compra_id),
+        KEY idx_compra_detalles_inventario (inventario_id),
+        CONSTRAINT fk_compra_detalles_compra FOREIGN KEY (compra_id) REFERENCES compras(id) ON DELETE RESTRICT,
+        CONSTRAINT fk_compra_detalles_inventario FOREIGN KEY (inventario_id) REFERENCES inventario(id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB");
 
     // Tabla clientes
     $pdo->exec("CREATE TABLE IF NOT EXISTS clientes (
