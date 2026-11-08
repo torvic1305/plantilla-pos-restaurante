@@ -18,8 +18,9 @@
 7. Elige las opciones del POS, confirmación de cobro y campos del recibo
 8. En **Impresoras y comandas**, configura IP privada y puerto (normalmente `9100`) para recibos, cocina y barra. Deja una IP vacía para usar el diálogo del navegador.
 9. Escribe las categorías que deben ir a barra, una por línea; las demás categorías se mandan a cocina. Guarda y prueba cada impresora.
-10. Personaliza **Colores y Estilos** si deseas
-11. Haz clic en **Guardar Configuración**
+10. En **Recibos**, cambia el ancho, tamaño de letra, altura y márgenes; arrastra los márgenes en la vista previa editable para ajustar el área de impresión.
+11. Sube opcionalmente un logo y/o una imagen QR, elige si va en el encabezado o en el pie y selecciona qué datos, IVA y propina aparecerán.
+12. Personaliza **Colores y Estilos** si deseas y haz clic en **Guardar Configuración**.
 
 La impresión ESC/POS por red requiere que el servidor donde se ejecuta PHP pueda conectarse por TCP a cada impresora. Usa impresoras ESC/POS compatibles con impresión directa de red; esta opción no descubre impresoras automáticamente.
 
@@ -34,6 +35,17 @@ La impresión ESC/POS por red requiere que el servidor donde se ejecuta PHP pued
 5. Ajusta los permisos individuales del empleado y guarda los cambios. Los permisos se verifican en el servidor; ocultar un enlace no es la única protección.
 
 Los permisos disponibles cubren el POS, lectura y edición del menú, clientes e inventario, empleados, informes, mermas, promociones, configuración, cocina, cierre de caja, propinas y consulta/eliminación de ventas suspendidas. Los nuevos empleados reciben permisos iniciales según su rol; el gerente tiene todos los permisos por defecto.
+
+### Registrar gastos
+1. Asigna al empleado el permiso **Registrar y consultar gastos del restaurante** desde **Empleados y permisos**.
+2. El empleado con permiso abre **Gastos** desde el panel, registra concepto, categoría, monto, fecha y forma de pago, y consulta el historial.
+3. Sin el permiso, el acceso no aparece y el servidor bloquea la página.
+
+### Historial del sistema
+El **Historial del sistema** registra inicios de sesión, ventas, cambios de empleados, menú, inventario, propinas, compras, caja, gastos y otras operaciones administrativas. Solo está disponible para la cuenta especial del programador (`super`) y las cuentas con rol **Gerente**. Permite filtrar por fechas, acción y área.
+
+### Diseñar e imprimir recibos
+En **Configuración → Recibos**, modifica el ancho de papel, la letra, la altura mínima y los márgenes. La vista previa se actualiza al cambiar los valores y permite arrastrar las bandas amarillas de margen. Sube imágenes locales PNG, JPG o WEBP (máximo 2 MB) para el logo y/o un QR; puedes ubicarlos al inicio o al pie del recibo. Los controles de IVA y propina permiten mostrar sus renglones incluso cuando el importe sea $0.00. La impresión del navegador puede agregar encabezados configurados por el propio navegador; usa márgenes de página cero y desactiva encabezados/pies en el diálogo de impresión si aparecen.
 
 Las ventas con formas de pago personalizadas también aparecen con su propio total en el desglose del cierre de caja y se guardan como “otros métodos” en el registro del cierre.
 

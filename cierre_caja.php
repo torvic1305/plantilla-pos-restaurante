@@ -75,6 +75,14 @@ if (($_POST['accion'] ?? null) === 'crear_cierre') {
         $cierre_actual['total_impuestos'] ?? 0,
         $cierre_actual['total_propinas'] ?? 0
     ]);
+    $closeId = (int) $GLOBALS['pdo']->lastInsertId();
+    registrarAuditoria(
+        (int) $user['id'],
+        'CIERRE_CAJA',
+        'CAJA',
+        $closeId,
+        'Fecha: ' . date('Y-m-d') . ', Total: $' . number_format((float) ($cierre_actual['total_ventas_valor'] ?? 0), 2, '.', '')
+    );
 }
 
 // Obtener ventas del día para cierre

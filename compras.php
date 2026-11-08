@@ -122,8 +122,10 @@ $navigation = [
 </head>
 <body class="app-layout purchases-page">
     <aside class="sidebar">
-        <div class="sidebar-brand">RESTAURANTE POS</div>
-        <nav aria-label="Navegación principal">
+        <button class="sidebar-brand" type="button" aria-controls="main-navigation" aria-expanded="true">
+            RESTAURANTE POS <span class="sidebar-toggle-icon" aria-hidden="true">⌄</span>
+        </button>
+        <nav id="main-navigation" aria-label="Navegación principal">
             <?php foreach ($navigation as [$label, $url, $icon, $visible]): ?>
                 <?php if ($visible): ?>
                     <a href="<?= $escape($url) ?>" class="<?= $url === 'compras.php' ? 'active' : '' ?>">
@@ -354,5 +356,6 @@ $navigation = [
             updatePurchaseTotal();
         </script>
     <?php endif; ?>
+    <script src="utilidades.js"></script>
 </body>
 </html>

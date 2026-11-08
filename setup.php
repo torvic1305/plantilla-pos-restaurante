@@ -231,6 +231,20 @@ try {
     )");
     ensureColumn($pdo, 'cierres_caja', 'total_otros', 'DECIMAL(10,2) DEFAULT 0');
 
+    $pdo->exec("CREATE TABLE IF NOT EXISTS gastos (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        concepto VARCHAR(160) NOT NULL,
+        categoria VARCHAR(80) NOT NULL,
+        monto DECIMAL(12,2) NOT NULL,
+        fecha DATE NOT NULL,
+        metodo_pago VARCHAR(40) NOT NULL,
+        observaciones VARCHAR(500) NULL,
+        usuario_id INT NULL,
+        creado TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_gastos_fecha (fecha, id),
+        CONSTRAINT fk_gastos_usuario FOREIGN KEY (usuario_id) REFERENCES empleados(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB");
+
     // Tabla auditoría
     $pdo->exec("CREATE TABLE IF NOT EXISTS audit_log (
         id INT AUTO_INCREMENT PRIMARY KEY,

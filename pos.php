@@ -49,6 +49,17 @@ $config_recibos = [
     'mostrarNotas' => !empty($config['recibo_mostrar_notas']),
     'mostrarSubtotal' => !empty($config['recibo_mostrar_subtotal']),
     'mostrarPago' => !empty($config['recibo_mostrar_pago']),
+    'mostrarPropina' => !empty($config['recibo_mostrar_propina']),
+    'imagenes' => [
+        'logo' => [
+            'url' => !empty($config['recibo_logo_imagen']) ? 'recibo_imagen.php?tipo=logo' : '',
+            'posicion' => (string) ($config['recibo_logo_posicion'] ?? 'encabezado'),
+        ],
+        'qr' => [
+            'url' => !empty($config['recibo_qr_imagen']) ? 'recibo_imagen.php?tipo=qr' : '',
+            'posicion' => (string) ($config['recibo_qr_posicion'] ?? 'pie'),
+        ],
+    ],
 ];
 $config_comandas = [
     'anchoPapel' => (int) ($config['comanda_ancho_papel'] ?? '80'),
@@ -399,6 +410,7 @@ foreach ($inventarioVenta as $item) {
         let suspendidaOriginalOrder = [];
         let suspendidaAddedItems = [];
         let ventaFinalizadaId = null;
+        let reciboPendientePropina = null;
         let subtotalVenta = 0;
         let impuesto = parseFloat('<?php echo $impuesto; ?>') || 0;
         let itemEditandoIndex = -1;
@@ -1111,8 +1123,18 @@ foreach ($inventarioVenta as $item) {
                         resetOrdenActual();
                         estadoMain.textContent = 'Venta completada. Ingrese propina o cierre el panel.';
                         alert('Venta cobrada correctamente. Cambio: $' + cambio.toFixed(2));
-                        // Imprimir recibo final
-                        imprimirRecibo(data.id, ordenParaImprimir, subtotal, descuentoTotal, total, tipoPago, montoPagado, cambio, contextoImpresion);
+                        reciboPendientePropina = {
+                            id: data.id,
+                            orden: ordenParaImprimir,
+                            subtotal,
+                            descuento: descuentoTotal,
+                            total,
+                            tipoPago,
+                            montoPagado,
+                            cambio,
+                            contextoImpresion
+                        };
+                        imprimirRecibo(data.id, ordenParaImprimir, subtotal, descuentoTotal, total, tipoPago, montoPagado, cambio, contextoImpresion, true, 0);
                     } else {
                         alert(data.message || 'Error al completar la venta');
                     }
@@ -1214,6 +1236,24 @@ foreach ($inventarioVenta as $item) {
                 .then(data => {
                     if (data.status === 'ok') {
                         alert('Propina registrada correctamente.');
+                        if (propina > 0 && reciboPendientePropina) {
+                            const recibo = reciboPendientePropina;
+                            reciboPendientePropina = null;
+                            imprimirRecibo(
+                                recibo.id,
+                                recibo.orden,
+                                recibo.subtotal,
+                                recibo.descuento,
+                                recibo.total,
+                                recibo.tipoPago,
+                                recibo.montoPagado,
+                                recibo.cambio,
+                                recibo.contextoImpresion,
+                                false,
+                                propina
+                            );
+                        }
+                        reciboPendientePropina = null;
                         resetVentaFinalizadaPanel();
                         ventaIdFinalizada.textContent = 'N/D';
                     } else {
@@ -1224,6 +1264,7 @@ foreach ($inventarioVenta as $item) {
 
 
         document.getElementById('finalizar-propina').addEventListener('click', function () {
+            reciboPendientePropina = null;
             resetVentaFinalizadaPanel();
         });
 
@@ -1393,7 +1434,8 @@ foreach ($inventarioVenta as $item) {
                             montoPagado,
                             tipoPago === 'Efectivo' ? Math.max(0, montoPagado - total) : 0,
                             contextoImpresion,
-                            false
+                            false,
+                            Math.max(0, propina)
                         );
                         alert('Venta suspendida completada correctamente.');
                         window.history.replaceState(null, '', 'pos.php');
@@ -1480,7 +1522,7 @@ foreach ($inventarioVenta as $item) {
             const alturaMinima = esRecibo ? Math.max(100, Math.min(500, opciones.altoPapel || 200)) : 200;
             const margenSuperior = Math.max(0, Math.min(20, formato.margenSuperior || 0));
             const margenInferior = Math.max(0, Math.min(20, formato.margenInferior || 0));
-            win.document.write(`<!DOCTYPE html><html><head><title>${escaparHtmlImpresion(titulo)}</title><style id="print-page"></style><style>
+            win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escaparHtmlImpresion(titulo)}</title><style id="print-page"></style><style>
                 * { box-sizing: border-box; }
                 html, body { margin: 0; padding: 0; width: ${anchoPapel}mm; overflow: visible; }
                 body { font-family: Arial, sans-serif; font-size: ${tamanoFuente}; line-height: 1.35; overflow-wrap: anywhere; }
@@ -1491,15 +1533,41 @@ foreach ($inventarioVenta as $item) {
                 .items { margin: 8px 0; }
                 .items div { margin-bottom: 4px; }
                 .footer { margin-top: 10px; }
+                .receipt-image { display: flex; justify-content: center; margin: 5px 0; }
+                .receipt-image img { display: block; max-width: 90%; max-height: 35mm; object-fit: contain; }
+                @media print { html, body { margin: 0 !important; padding: 0 !important; } #receipt-print-content { break-inside: avoid; } }
             </style></head><body><div id="receipt-print-content">${contenido}</div></body></html>`);
             win.document.close();
-            win.focus();
+            win.document.title = titulo;
+            try {
+                win.history.replaceState(null, titulo, window.location.href);
+            } catch (error) {
+                console.warn('No se pudo reemplazar la dirección temporal de impresión.', error);
+            }
             const receiptContent = win.document.getElementById('receipt-print-content');
-            const contentHeightMm = receiptContent.getBoundingClientRect().height * 25.4 / 96;
-            const pageHeightMm = Math.max(alturaMinima, Math.ceil(contentHeightMm + 8));
-            win.document.getElementById('print-page').textContent =
-                `@page { size: ${anchoPapel}mm ${pageHeightMm}mm; margin: 0; }`;
-            win.print();
+            const imageLoads = Array.from(receiptContent.querySelectorAll('img')).map(image => {
+                if (image.complete) {
+                    return image.naturalWidth > 0
+                        ? Promise.resolve()
+                        : Promise.reject(new Error('No se pudo cargar una imagen del recibo.'));
+                }
+                return new Promise((resolve, reject) => {
+                    image.addEventListener('load', resolve, { once: true });
+                    image.addEventListener('error', () => reject(new Error('No se pudo cargar una imagen del recibo.')), { once: true });
+                });
+            });
+            Promise.all(imageLoads).then(() => {
+                if (win.closed) return;
+                const contentHeightMm = receiptContent.getBoundingClientRect().height * 25.4 / 96;
+                const pageHeightMm = Math.max(alturaMinima, Math.ceil(contentHeightMm + 8));
+                win.document.getElementById('print-page').textContent =
+                    `@page { size: ${anchoPapel}mm ${pageHeightMm}mm; margin: 0; }`;
+                win.focus();
+                win.print();
+            }).catch(error => {
+                alert(error.message || 'No se pudo preparar la impresión del recibo.');
+                win.close();
+            });
             return true;
         }
 
@@ -1526,13 +1594,72 @@ foreach ($inventarioVenta as $item) {
             }).join('');
         }
 
+        function generarImagenesReciboHtml(posicion) {
+            return Object.entries(configuracionPOS.recibos.imagenes).map(([tipo, imagen]) => {
+                if (!imagen.url || imagen.posicion !== posicion) return '';
+                const alt = tipo === 'logo' ? 'Logo del restaurante' : 'Código QR';
+                return `<div class="receipt-image"><img src="${escaparHtmlImpresion(imagen.url)}" alt="${alt}"></div>`;
+            }).join('');
+        }
+
+        function prepararImagenTermica(imagen, alturaMaxima) {
+            return new Promise((resolve, reject) => {
+                const source = new Image();
+                source.onload = () => {
+                    const maxWidth = configuracionPOS.recibos.anchoPapel === 58 ? 384 : 576;
+                    const scale = Math.min(maxWidth / source.naturalWidth, alturaMaxima / source.naturalHeight, 1);
+                    const width = Math.max(1, Math.floor(source.naturalWidth * scale));
+                    const height = Math.max(1, Math.floor(source.naturalHeight * scale));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const context = canvas.getContext('2d', { willReadFrequently: true });
+                    if (!context) {
+                        reject(new Error('No se pudo preparar una imagen para la impresora.'));
+                        return;
+                    }
+                    context.fillStyle = '#fff';
+                    context.fillRect(0, 0, width, height);
+                    context.drawImage(source, 0, 0, width, height);
+                    const pixels = context.getImageData(0, 0, width, height).data;
+                    const bytesPerRow = Math.ceil(width / 8);
+                    const raster = new Uint8Array(bytesPerRow * height);
+                    for (let y = 0; y < height; y++) {
+                        for (let x = 0; x < width; x++) {
+                            const pixel = (y * width + x) * 4;
+                            const luminance = (pixels[pixel] * 299 + pixels[pixel + 1] * 587 + pixels[pixel + 2] * 114) / 1000;
+                            if (luminance < 180) raster[y * bytesPerRow + Math.floor(x / 8)] |= 1 << (7 - (x % 8));
+                        }
+                    }
+                    let binary = '';
+                    for (let offset = 0; offset < raster.length; offset += 8192) {
+                        binary += String.fromCharCode(...raster.subarray(offset, offset + 8192));
+                    }
+                    resolve({ width, height, bytesPerRow, data: btoa(binary) });
+                };
+                source.onerror = () => reject(new Error('No se pudo cargar la imagen para la impresora.'));
+                source.src = imagen.url;
+            });
+        }
+
+        async function obtenerImagenesTermicas() {
+            const images = {};
+            for (const [type, image] of Object.entries(configuracionPOS.recibos.imagenes)) {
+                if (image.url) {
+                    images[type] = await prepararImagenTermica(image, type === 'logo' ? 120 : 240);
+                }
+            }
+            return images;
+        }
+
         function enviarTrabajoImpresion(estacion, orden, contexto, datos, impresionLocal) {
             const impresora = configuracionPOS.impresoras[estacion];
             if (!impresora || !impresora.ip) {
                 return Promise.resolve(impresionLocal() !== false);
             }
 
-            return fetch('imprimir_comanda.php', {
+            const preparedImages = estacion === 'recibo' ? obtenerImagenesTermicas() : Promise.resolve({});
+            return preparedImages.then(imagenesRecibo => fetch('imprimir_comanda.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
                 body: JSON.stringify({
@@ -1540,10 +1667,11 @@ foreach ($inventarioVenta as $item) {
                     orden,
                     mesa: contexto.mesa,
                     mesero: contexto.mesero,
+                    imagenes_recibo: imagenesRecibo,
                     csrf_token: csrfToken,
                     ...datos
                 })
-            })
+            }))
                 .then(async response => {
                     const result = await response.json();
                     if (!response.ok || result.status !== 'ok') {
@@ -1558,7 +1686,7 @@ foreach ($inventarioVenta as $item) {
                     return !result.message.includes('no contiene productos');
                 })
                 .catch(error => {
-                    const stationName = estacion === 'cocina' ? 'cocina' : 'barra';
+                    const stationName = estacion === 'recibo' ? 'recibo' : (estacion === 'cocina' ? 'cocina' : 'barra');
                     alert('No se pudo imprimir en ' + stationName + ': ' + (error.message || 'error de conexión con la impresora.'));
                     return false;
                 });
@@ -1570,6 +1698,7 @@ foreach ($inventarioVenta as $item) {
             const pie = escaparHtmlImpresion(opciones.pie);
             const impuestoCalculado = Math.max(0, subtotal - descuento) * (impuesto / 100);
             const contenido = `
+                ${generarImagenesReciboHtml('encabezado')}
                 <div class="center"><strong>${titulo} · PRE-RECIBO</strong></div>
                 <div class="separator"></div>
                 ${opciones.mostrarFecha ? `<div>Fecha: ${new Date().toLocaleString()}</div>` : ''}
@@ -1580,9 +1709,11 @@ foreach ($inventarioVenta as $item) {
                 <div class="separator"></div>
                 ${opciones.mostrarSubtotal ? `<div>Subtotal: $${subtotal.toFixed(2)}</div>` : ''}
                 ${opciones.mostrarDescuentos && descuento > 0 ? `<div>Descuento: $${descuento.toFixed(2)}</div>` : ''}
-                ${opciones.mostrarImpuestos && impuestoCalculado > 0 ? `<div>Impuesto: $${impuestoCalculado.toFixed(2)}</div>` : ''}
+                ${opciones.mostrarImpuestos ? `<div>IVA: $${impuestoCalculado.toFixed(2)}</div>` : ''}
+                ${opciones.mostrarPropina ? '<div>Propina: $0.00</div>' : ''}
                 <div><strong>Total: $${total.toFixed(2)}</strong></div>
-                <div class="footer center small">${pie}</div>
+                ${pie ? `<div class="footer center small">${pie}</div>` : ''}
+                ${generarImagenesReciboHtml('pie')}
             `;
             enviarTrabajoImpresion('recibo', orden, contexto, {
                 pre_recibo: true,
@@ -1591,12 +1722,13 @@ foreach ($inventarioVenta as $item) {
             }, () => crearVentanaImpresion(opciones.titulo + ' - Pre-Recibo', contenido, true));
         }
 
-        function imprimirRecibo(id, orden, subtotal, descuento, total, tipoPago, montoPagado, cambio, contexto = obtenerContextoImpresion(), imprimirComandas = true) {
+        function imprimirRecibo(id, orden, subtotal, descuento, total, tipoPago, montoPagado, cambio, contexto = obtenerContextoImpresion(), imprimirComandas = true, propina = 0) {
             const opciones = configuracionPOS.recibos;
             const titulo = escaparHtmlImpresion(opciones.titulo);
             const pie = escaparHtmlImpresion(opciones.pie);
             const impuestoCalculado = Math.max(0, subtotal - descuento) * (impuesto / 100);
             const contenido = `
+                ${generarImagenesReciboHtml('encabezado')}
                 <div class="center"><strong>${titulo}</strong></div>
                 <div class="center"><strong>RECIBO</strong></div>
                 <div class="separator"></div>
@@ -1609,16 +1741,19 @@ foreach ($inventarioVenta as $item) {
                 <div class="separator"></div>
                 ${opciones.mostrarSubtotal ? `<div>Subtotal: $${subtotal.toFixed(2)}</div>` : ''}
                 ${opciones.mostrarDescuentos && descuento > 0 ? `<div>Descuento: $${descuento.toFixed(2)}</div>` : ''}
-                ${opciones.mostrarImpuestos && impuestoCalculado > 0 ? `<div>Impuesto: $${impuestoCalculado.toFixed(2)}</div>` : ''}
+                ${opciones.mostrarImpuestos ? `<div>IVA: $${impuestoCalculado.toFixed(2)}</div>` : ''}
+                ${opciones.mostrarPropina ? `<div>Propina: $${Math.max(0, propina).toFixed(2)}</div>` : ''}
                 <div><strong>Total: $${total.toFixed(2)}</strong></div>
                 ${opciones.mostrarPago ? `<div>Forma de Pago: ${escaparHtmlImpresion(tipoPago)}</div>
                 ${tipoPago === 'Efectivo' ? `<div>Monto Pagado: $${montoPagado.toFixed(2)}</div><div>Cambio: $${cambio.toFixed(2)}</div>` : ''}` : ''}
-                <div class="footer center small">${pie}</div>
+                ${pie ? `<div class="footer center small">${pie}</div>` : ''}
+                ${generarImagenesReciboHtml('pie')}
             `;
             enviarTrabajoImpresion('recibo', orden, contexto, {
                 venta_id: id,
                 descuento,
                 impuesto: impuestoCalculado,
+                propina: Math.max(0, propina),
                 tipo_pago: tipoPago,
                 monto_pagado: montoPagado
             }, () => crearVentanaImpresion(opciones.titulo + ' - Recibo', contenido, true));

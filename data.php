@@ -39,8 +39,23 @@ try {
     }
     $appTables = $pdo->query(
         "SELECT TABLE_NAME FROM information_schema.TABLES
-         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('inventario', 'compras', 'compra_detalles')"
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('inventario', 'compras', 'compra_detalles', 'gastos')"
     )->fetchAll(PDO::FETCH_COLUMN);
+    if (!in_array('gastos', $appTables, true)) {
+        $pdo->exec("CREATE TABLE gastos (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            concepto VARCHAR(160) NOT NULL,
+            categoria VARCHAR(80) NOT NULL,
+            monto DECIMAL(12,2) NOT NULL,
+            fecha DATE NOT NULL,
+            metodo_pago VARCHAR(40) NOT NULL,
+            observaciones VARCHAR(500) NULL,
+            usuario_id INT NULL,
+            creado TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_gastos_fecha (fecha, id),
+            CONSTRAINT fk_gastos_usuario FOREIGN KEY (usuario_id) REFERENCES empleados(id) ON DELETE SET NULL
+        ) ENGINE=InnoDB");
+    }
     if (in_array('inventario', $appTables, true)) {
         if (!in_array('compras', $appTables, true)) {
             $pdo->exec("CREATE TABLE compras (
@@ -115,6 +130,11 @@ function getAppConfig()
         'recibo_mostrar_notas' => true,
         'recibo_mostrar_subtotal' => true,
         'recibo_mostrar_pago' => true,
+        'recibo_mostrar_propina' => true,
+        'recibo_logo_imagen' => null,
+        'recibo_logo_posicion' => 'encabezado',
+        'recibo_qr_imagen' => null,
+        'recibo_qr_posicion' => 'pie',
         'impresora_recibo_ip' => '',
         'impresora_recibo_puerto' => 9100,
         'impresora_cocina_ip' => '',
@@ -154,6 +174,16 @@ function getAppConfig()
             }
             if (!in_array($config['recibo_tamano_fuente'], ['pequena', 'normal', 'grande'], true)) {
                 $config['recibo_tamano_fuente'] = $default['recibo_tamano_fuente'];
+            }
+            foreach (['recibo_logo_imagen' => 'logo', 'recibo_qr_imagen' => 'qr'] as $imageKey => $imageType) {
+                $imageName = $config[$imageKey];
+                $pattern = '/^recibo-' . $imageType . '-[a-f0-9]{32}\.(?:png|jpe?g|webp)$/';
+                $config[$imageKey] = is_string($imageName) && preg_match($pattern, $imageName) ? $imageName : null;
+            }
+            foreach (['recibo_logo_posicion', 'recibo_qr_posicion'] as $positionKey) {
+                if (!in_array($config[$positionKey], ['encabezado', 'pie'], true)) {
+                    $config[$positionKey] = $default[$positionKey];
+                }
             }
             if (!in_array($config['comanda_ancho_papel'], ['58', '80'], true)) {
                 $config['comanda_ancho_papel'] = $default['comanda_ancho_papel'];
@@ -243,6 +273,59 @@ function getTotalVentaCobrado($venta)
     ), 2);
 }
 
+function registrarGasto($concepto, $categoria, $monto, $fecha, $metodoPago, $observaciones, $usuarioId)
+{
+    global $pdo;
+    if (!$pdo instanceof PDO) {
+        throw new RuntimeException('No hay conexión con la base de datos.');
+    }
+
+    $stmt = $pdo->prepare(
+        'INSERT INTO gastos (concepto, categoria, monto, fecha, metodo_pago, observaciones, usuario_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)'
+    );
+    $stmt->execute([$concepto, $categoria, $monto, $fecha, $metodoPago, $observaciones, $usuarioId]);
+    $expenseId = (int) $pdo->lastInsertId();
+    registrarAuditoria($usuarioId, 'CREAR_GASTO', 'GASTO', $expenseId, $concepto . ' · $' . number_format($monto, 2, '.', ''));
+    return $expenseId;
+}
+
+function getGastosRecientes($limit = 50, $fecha = null)
+{
+    global $pdo;
+    if (!$pdo instanceof PDO) {
+        throw new RuntimeException('No hay conexión con la base de datos.');
+    }
+
+    $limit = max(1, min(200, (int) $limit));
+    $sql = 'SELECT g.*, e.nombre AS usuario_nombre
+            FROM gastos g LEFT JOIN empleados e ON e.id = g.usuario_id';
+    $params = [];
+    if (is_string($fecha) && $fecha !== '') {
+        $sql .= ' WHERE g.fecha = ?';
+        $params[] = $fecha;
+    }
+    $sql .= ' ORDER BY g.fecha DESC, g.id DESC LIMIT ?';
+    $stmt = $pdo->prepare($sql);
+    foreach ($params as $index => $value) {
+        $stmt->bindValue($index + 1, $value, PDO::PARAM_STR);
+    }
+    $stmt->bindValue(count($params) + 1, $limit, PDO::PARAM_INT);
+    $stmt->execute();
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function getTotalGastosPorFecha($fecha)
+{
+    global $pdo;
+    if (!$pdo instanceof PDO) {
+        throw new RuntimeException('No hay conexión con la base de datos.');
+    }
+    $stmt = $pdo->prepare('SELECT COALESCE(SUM(monto), 0) FROM gastos WHERE fecha = ?');
+    $stmt->execute([$fecha]);
+    return (float) $stmt->fetchColumn();
+}
+
 function getDefaultPermissions($role)
 {
     $permissions = [
@@ -264,6 +347,7 @@ function getDefaultPermissions($role)
         'dashboard_grafica' => false,
         'ventas_suspendidas_ver' => false,
         'eliminar_suspendidas' => false,
+        'gastos' => false,
     ];
 
     if ($role === 'gerente') {
@@ -310,6 +394,7 @@ function getPermissionDefinitions()
             'empleados' => 'Administrar empleados y sus permisos',
             'config' => 'Cambiar la configuración general del POS',
             'eliminar_suspendidas' => 'Eliminar todas las ventas suspendidas',
+            'gastos' => 'Registrar y consultar gastos del restaurante',
         ],
     ];
 }
@@ -1101,7 +1186,6 @@ function addVenta($mesero_id, $mesa, $orden, $suspendida = false, $tipo_pago = n
         if (!$suspendida) {
             consumeInventoryForSale($orden, $ventaId);
         }
-        registrarAuditoria($_SESSION['user']['id'] ?? null, 'CREATE', 'venta', $ventaId, "Venta " . ($suspendida ? "suspendida" : "completada"));
         if ($ownsTransaction) {
             $pdo->commit();
         }
@@ -1320,9 +1404,17 @@ function logAction($action, $user_id)
     global $pdo;
     if (!$pdo)
         return false;
+    $auditSaved = registrarAuditoria(
+        $user_id,
+        'ACCION_SISTEMA',
+        'SISTEMA',
+        null,
+        sanitizeString($action, 1000)
+    );
     try {
         $stmt = $pdo->prepare("INSERT INTO logs (action, user_id, timestamp) VALUES (?, ?, NOW())");
-        return $stmt->execute([$action, $user_id]);
+        $legacySaved = $stmt->execute([$action, $user_id]);
+        return $auditSaved && $legacySaved;
     } catch (PDOException $e) {
         error_log("Log failed for action: $action - " . $e->getMessage());
         return false;

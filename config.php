@@ -10,6 +10,51 @@ $managedEmployees = $canManageEmployees
     : [];
 $error_msg = '';
 $success_msg = '';
+$newReceiptImages = [];
+$configSaved = false;
+$previousLogoImage = $config['recibo_logo_imagen'];
+$previousQrImage = $config['recibo_qr_imagen'];
+
+function saveReceiptImageUpload($fieldName, $imageType)
+{
+    $file = $_FILES[$fieldName] ?? null;
+    if (!is_array($file) || ($file['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+        return null;
+    }
+    if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK || !is_string($file['tmp_name'] ?? null)) {
+        throw new Exception('No se pudo recibir la imagen del recibo.');
+    }
+    if (!is_uploaded_file($file['tmp_name'])) {
+        throw new Exception('La imagen recibida no es un archivo cargado válido.');
+    }
+    $fileSize = filesize($file['tmp_name']);
+    if ($fileSize === false || $fileSize > 2 * 1024 * 1024) {
+        throw new Exception('La imagen debe ser válida y no superar 2 MB.');
+    }
+
+    $imageInfo = @getimagesize($file['tmp_name']);
+    $mime = (new finfo(FILEINFO_MIME_TYPE))->file($file['tmp_name']);
+    $extensions = ['image/png' => 'png', 'image/jpeg' => 'jpg', 'image/webp' => 'webp'];
+    if (
+        !is_array($imageInfo) || !isset($extensions[$mime])
+        || $imageInfo['mime'] !== $mime
+        || $imageInfo[0] < 1 || $imageInfo[1] < 1
+        || $imageInfo[0] > 2000 || $imageInfo[1] > 2000
+        || $imageInfo[0] * $imageInfo[1] > 3000000
+    ) {
+        throw new Exception('Usa una imagen PNG, JPG o WEBP de hasta 2000 × 2000 píxeles.');
+    }
+
+    $directory = __DIR__ . '/uploads/recibos';
+    if (!is_dir($directory) && !mkdir($directory, 0750, true) && !is_dir($directory)) {
+        throw new Exception('No se pudo preparar el almacenamiento de imágenes.');
+    }
+    $filename = 'recibo-' . $imageType . '-' . bin2hex(random_bytes(16)) . '.' . $extensions[$mime];
+    if (!move_uploaded_file($file['tmp_name'], $directory . '/' . $filename)) {
+        throw new Exception('No se pudo guardar la imagen del recibo.');
+    }
+    return $filename;
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
@@ -68,6 +113,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($receiptTitle === '') {
             throw new Exception('El título del recibo no puede quedar vacío.');
         }
+        $newLogoImage = saveReceiptImageUpload('recibo_logo_archivo', 'logo');
+        if ($newLogoImage !== null) {
+            $newReceiptImages[] = $newLogoImage;
+        }
+        $newQrImage = saveReceiptImageUpload('recibo_qr_archivo', 'qr');
+        if ($newQrImage !== null) {
+            $newReceiptImages[] = $newQrImage;
+        }
+        $logoPosition = $_POST['recibo_logo_posicion'] ?? '';
+        $qrPosition = $_POST['recibo_qr_posicion'] ?? '';
+        if (
+            !is_string($logoPosition) || !in_array($logoPosition, ['encabezado', 'pie'], true)
+            || !is_string($qrPosition) || !in_array($qrPosition, ['encabezado', 'pie'], true)
+        ) {
+            throw new Exception('Selecciona una ubicación válida para las imágenes del recibo.');
+        }
+        $logoImage = $newLogoImage ?? (!empty($_POST['recibo_eliminar_logo']) ? null : $config['recibo_logo_imagen']);
+        $qrImage = $newQrImage ?? (!empty($_POST['recibo_eliminar_qr']) ? null : $config['recibo_qr_imagen']);
 
         $receiptPaperWidth = $_POST['recibo_ancho_papel'] ?? '';
         $receiptFontSize = $_POST['recibo_tamano_fuente'] ?? '';
@@ -145,6 +208,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'recibo_mostrar_notas' => isset($_POST['recibo_mostrar_notas']),
             'recibo_mostrar_subtotal' => isset($_POST['recibo_mostrar_subtotal']),
             'recibo_mostrar_pago' => isset($_POST['recibo_mostrar_pago']),
+            'recibo_mostrar_propina' => isset($_POST['recibo_mostrar_propina']),
+            'recibo_logo_imagen' => $logoImage,
+            'recibo_logo_posicion' => $logoPosition,
+            'recibo_qr_imagen' => $qrImage,
+            'recibo_qr_posicion' => $qrPosition,
             'comanda_ancho_papel' => $commandPaperWidth,
             'comanda_tamano_fuente' => $commandFontSize,
             'comanda_margen_superior' => $commandTopMargin,
@@ -164,9 +232,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ]);
 
         saveAppConfig($config);
+        $configSaved = true;
+        foreach ([[$previousLogoImage, $logoImage], [$previousQrImage, $qrImage]] as [$previousImage, $currentImage]) {
+            if (is_string($previousImage) && $previousImage !== $currentImage) {
+                $oldImagePath = __DIR__ . '/uploads/recibos/' . $previousImage;
+                if (is_file($oldImagePath) && !unlink($oldImagePath)) {
+                    error_log('Unable to remove a replaced receipt image.');
+                }
+            }
+        }
         registrarAuditoria($_SESSION['user']['id'], 'UPDATE_CONFIG', 'CONFIG', 1, 'Configuración del sistema POS actualizada');
         $success_msg = 'Configuración guardada correctamente.';
     } catch (Exception $e) {
+        if (!$configSaved) {
+            foreach ($newReceiptImages as $image) {
+                $uploadedPath = __DIR__ . '/uploads/recibos/' . $image;
+                if (is_file($uploadedPath) && !unlink($uploadedPath)) {
+                    error_log('Unable to remove an uncommitted receipt image.');
+                }
+            }
+        }
         $error_msg = $e->getMessage();
     }
 }
@@ -226,7 +311,7 @@ if (!in_array($config['fuente'], $fontChoices, true)) {
             </section>
         <?php endif; ?>
 
-        <form method="post" class="settings-form">
+        <form method="post" enctype="multipart/form-data" class="settings-form">
             <input type="hidden" name="csrf_token" value="<?= $escape(getCsrfToken()) ?>">
 
             <section class="settings-section">
@@ -305,6 +390,34 @@ if (!in_array($config['fuente'], $fontChoices, true)) {
                     <label class="field-wide">Mensaje al pie
                         <input type="text" name="recibo_pie" maxlength="160" value="<?= $escape($config['recibo_pie']) ?>">
                     </label>
+                    <label>Imagen de encabezado o logo (PNG, JPG o WEBP)
+                        <input type="file" name="recibo_logo_archivo" accept="image/png,image/jpeg,image/webp">
+                        <small>Opcional · máximo 2 MB. La imagen se guarda localmente.</small>
+                    </label>
+                    <div class="receipt-image-setting">
+                        <strong>Ubicación del logo</strong>
+                        <select name="recibo_logo_posicion">
+                            <option value="encabezado" <?= ($config['recibo_logo_posicion'] ?? 'encabezado') === 'encabezado' ? 'selected' : '' ?>>Encabezado</option>
+                            <option value="pie" <?= ($config['recibo_logo_posicion'] ?? 'encabezado') === 'pie' ? 'selected' : '' ?>>Pie</option>
+                        </select>
+                        <?php if (!empty($config['recibo_logo_imagen'])): ?>
+                            <span class="receipt-image-current"><img src="recibo_imagen.php?tipo=logo" alt="Logo configurado"><span><label><input type="checkbox" name="recibo_eliminar_logo" value="1"> Eliminar logo actual</label></span></span>
+                        <?php endif; ?>
+                    </div>
+                    <label>Imagen de código QR (PNG, JPG o WEBP)
+                        <input type="file" name="recibo_qr_archivo" accept="image/png,image/jpeg,image/webp">
+                        <small>Sube una imagen QR existente; no se envía información a servicios externos.</small>
+                    </label>
+                    <div class="receipt-image-setting">
+                        <strong>Ubicación del código QR</strong>
+                        <select name="recibo_qr_posicion">
+                            <option value="encabezado" <?= ($config['recibo_qr_posicion'] ?? 'pie') === 'encabezado' ? 'selected' : '' ?>>Encabezado</option>
+                            <option value="pie" <?= ($config['recibo_qr_posicion'] ?? 'pie') === 'pie' ? 'selected' : '' ?>>Pie</option>
+                        </select>
+                        <?php if (!empty($config['recibo_qr_imagen'])): ?>
+                            <span class="receipt-image-current"><img src="recibo_imagen.php?tipo=qr" alt="Código QR configurado"><span><label><input type="checkbox" name="recibo_eliminar_qr" value="1"> Eliminar QR actual</label></span></span>
+                        <?php endif; ?>
+                    </div>
                     <label>Ancho del papel
                         <select name="recibo_ancho_papel">
                             <option value="58" <?= ($config['recibo_ancho_papel'] ?? '80') === '58' ? 'selected' : '' ?>>58 mm (papel angosto)</option>
@@ -337,7 +450,8 @@ if (!in_array($config['fuente'], $fontChoices, true)) {
                     <label class="setting-toggle"><input type="checkbox" name="recibo_mostrar_fecha" value="1" <?= !empty($config['recibo_mostrar_fecha']) ? 'checked' : '' ?>><span><strong>Mostrar fecha y hora</strong><small>En pre-recibos, recibos y comandas.</small></span></label>
                     <label class="setting-toggle"><input type="checkbox" name="recibo_mostrar_precios" value="1" <?= !empty($config['recibo_mostrar_precios']) ? 'checked' : '' ?>><span><strong>Mostrar precio por producto</strong><small>Controla los precios en la lista de artículos.</small></span></label>
                     <label class="setting-toggle"><input type="checkbox" name="recibo_mostrar_descuentos" value="1" <?= !empty($config['recibo_mostrar_descuentos']) ? 'checked' : '' ?>><span><strong>Mostrar descuentos</strong><small>Incluye el total de descuentos aplicados.</small></span></label>
-                    <label class="setting-toggle"><input type="checkbox" name="recibo_mostrar_impuestos" value="1" <?= !empty($config['recibo_mostrar_impuestos']) ? 'checked' : '' ?>><span><strong>Desglosar impuestos</strong><small>Muestra el importe del impuesto en el recibo.</small></span></label>
+                    <label class="setting-toggle"><input type="checkbox" name="recibo_mostrar_impuestos" value="1" <?= !empty($config['recibo_mostrar_impuestos']) ? 'checked' : '' ?>><span><strong>Mostrar IVA</strong><small>Incluye el IVA incluso cuando el importe sea $0.00.</small></span></label>
+                    <label class="setting-toggle"><input type="checkbox" name="recibo_mostrar_propina" value="1" <?= !empty($config['recibo_mostrar_propina']) ? 'checked' : '' ?>><span><strong>Mostrar propina</strong><small>Imprime la propina registrada o $0.00 si no se dejó.</small></span></label>
                     <label class="setting-toggle"><input type="checkbox" name="recibo_mostrar_mesa" value="1" <?= !empty($config['recibo_mostrar_mesa']) ? 'checked' : '' ?>><span><strong>Mostrar mesa o mostrador</strong><small>Incluye dónde se realizó la venta.</small></span></label>
                     <label class="setting-toggle"><input type="checkbox" name="recibo_mostrar_mesero" value="1" <?= !empty($config['recibo_mostrar_mesero']) ? 'checked' : '' ?>><span><strong>Mostrar mesero</strong><small>Incluye el empleado que atendió la venta.</small></span></label>
                     <label class="setting-toggle"><input type="checkbox" name="recibo_mostrar_folio" value="1" <?= !empty($config['recibo_mostrar_folio']) ? 'checked' : '' ?>><span><strong>Mostrar folio de venta</strong><small>Identifica el recibo con su número de venta.</small></span></label>
@@ -537,6 +651,39 @@ if (!in_array($config['fuente'], $fontChoices, true)) {
             receiptPreviewContent.appendChild(line);
         }
 
+        const receiptPreviewImages = {
+            logo: {
+                url: <?= json_encode(!empty($config['recibo_logo_imagen']) ? 'recibo_imagen.php?tipo=logo' : '') ?>,
+                originalUrl: <?= json_encode(!empty($config['recibo_logo_imagen']) ? 'recibo_imagen.php?tipo=logo' : '') ?>,
+                objectUrl: ''
+            },
+            qr: {
+                url: <?= json_encode(!empty($config['recibo_qr_imagen']) ? 'recibo_imagen.php?tipo=qr' : '') ?>,
+                originalUrl: <?= json_encode(!empty($config['recibo_qr_imagen']) ? 'recibo_imagen.php?tipo=qr' : '') ?>,
+                objectUrl: ''
+            }
+        };
+
+        function appendReceiptPreviewImages(position) {
+            Object.entries(receiptPreviewImages).forEach(([type, image]) => {
+                if (!image.url || receiptForm.elements[`recibo_${type}_posicion`].value !== position) return;
+                const wrapper = document.createElement('div');
+                wrapper.className = `receipt-preview-image receipt-preview-image-${type}`;
+                const previewImage = document.createElement('img');
+                previewImage.src = image.url;
+                previewImage.alt = type === 'logo' ? 'Vista previa del logo' : 'Vista previa del código QR';
+                previewImage.addEventListener('load', () => {
+                    if (!receiptPreviewContent.contains(wrapper)) return;
+                    const estimatedHeight = receiptPreviewPaper.scrollHeight / 96 * 25.4;
+                    const width = Number(receiptForm.elements.recibo_ancho_papel.value) || 80;
+                    const minHeight = Number(receiptForm.elements.recibo_alto_papel.value) || 200;
+                    receiptPreviewSize.textContent = `Papel ${width} mm · área mínima ${minHeight} mm · altura estimada con corte ${Math.max(minHeight + 8, Math.ceil(estimatedHeight))} mm`;
+                }, { once: true });
+                wrapper.appendChild(previewImage);
+                receiptPreviewContent.appendChild(wrapper);
+            });
+        }
+
         function updateReceiptPreview() {
             const value = name => receiptForm.elements[name].value;
             const checked = name => receiptForm.elements[name].checked;
@@ -555,6 +702,7 @@ if (!in_array($config['fuente'], $fontChoices, true)) {
             document.getElementById('receipt-preview-bottom-label').textContent = bottomMargin ? `Margen inferior ${bottomMargin} mm` : '';
             receiptPreviewContent.replaceChildren();
 
+            appendReceiptPreviewImages('encabezado');
             receiptPreviewLine(value('recibo_titulo') || 'Nombre del restaurante', 'receipt-preview-center receipt-preview-strong');
             receiptPreviewLine('RECIBO', 'receipt-preview-center receipt-preview-strong');
             receiptPreviewLine('--------------------------------', 'receipt-preview-separator');
@@ -583,7 +731,8 @@ if (!in_array($config['fuente'], $fontChoices, true)) {
             receiptPreviewLine('--------------------------------', 'receipt-preview-separator');
             if (checked('recibo_mostrar_subtotal')) receiptPreviewLine('Subtotal: $720.00');
             if (checked('recibo_mostrar_descuentos')) receiptPreviewLine('Descuento: -$20.00');
-            if (checked('recibo_mostrar_impuestos')) receiptPreviewLine('Impuesto: $112.00');
+            if (checked('recibo_mostrar_impuestos')) receiptPreviewLine('IVA: $112.00');
+            if (checked('recibo_mostrar_propina')) receiptPreviewLine('Propina: $0.00');
             receiptPreviewLine('TOTAL: $812.00', 'receipt-preview-strong');
             if (checked('recibo_mostrar_pago')) {
                 receiptPreviewLine('Pago: Efectivo');
@@ -595,6 +744,7 @@ if (!in_array($config['fuente'], $fontChoices, true)) {
                 receiptPreviewLine('--------------------------------', 'receipt-preview-separator');
                 receiptPreviewLine(footer, 'receipt-preview-center');
             }
+            appendReceiptPreviewImages('pie');
 
             const estimatedHeight = receiptPreviewPaper.scrollHeight / 96 * 25.4;
             receiptPreviewSize.textContent = `Papel ${width} mm · área mínima ${minHeight} mm · altura estimada con corte ${Math.max(minHeight + 8, Math.ceil(estimatedHeight))} mm`;
@@ -673,6 +823,27 @@ if (!in_array($config['fuente'], $fontChoices, true)) {
         receiptForm.querySelectorAll('[name^="recibo_"]').forEach(input => {
             input.addEventListener('input', updateReceiptPreview);
             input.addEventListener('change', updateReceiptPreview);
+        });
+        ['logo', 'qr'].forEach(type => {
+            const image = receiptPreviewImages[type];
+            const fileInput = receiptForm.elements[`recibo_${type}_archivo`];
+            const removeInput = receiptForm.elements[`recibo_eliminar_${type}`];
+            const refreshPreviewImage = () => {
+                if (image.objectUrl) {
+                    URL.revokeObjectURL(image.objectUrl);
+                    image.objectUrl = '';
+                }
+                const file = fileInput.files && fileInput.files[0];
+                if (file) {
+                    image.objectUrl = URL.createObjectURL(file);
+                    image.url = image.objectUrl;
+                } else {
+                    image.url = removeInput && removeInput.checked ? '' : image.originalUrl;
+                }
+                updateReceiptPreview();
+            };
+            fileInput.addEventListener('change', refreshPreviewImage);
+            if (removeInput) removeInput.addEventListener('change', refreshPreviewImage);
         });
         receiptForm.querySelectorAll('[name^="comanda_"]').forEach(input => {
             input.addEventListener('input', updateCommandPreview);

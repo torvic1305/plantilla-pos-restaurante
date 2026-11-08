@@ -162,6 +162,8 @@ $lowStockItems = !empty($permisos['inventario_ver']) ? getInventarioBajoStock() 
 $formatStockQuantity = static function ($quantity) {
     return rtrim(rtrim(number_format((float) $quantity, 3, '.', ''), '0'), '.');
 };
+$canManageExpenses = !empty($permisos['gastos']);
+$canViewAuditHistory = ($user['rol'] ?? '') === 'gerente' || ($user['usuario'] ?? '') === 'super';
 
 $menuNavegacion = [
     ['Panel', 'dashboard.php', '⌂', true],
@@ -170,6 +172,7 @@ $menuNavegacion = [
     ['Clientes', 'clientes.php', '♙', $permisos['clientes_ver'] ?? false],
     ['Inventario', 'inventario.php', '▤', $permisos['inventario_ver'] ?? false],
     ['Compras', 'compras.php', '▧', $permisos['inventario_ver'] ?? false],
+    ['Gastos', 'gastos.php', '$', $canManageExpenses],
     ['Empleados', 'empleados.php', '♧', $permisos['empleados'] ?? false],
     ['Informes', 'informes.php', '▥', $permisos['informes'] ?? false],
     ['Reportes Avanzados', 'reportes_avanzados.php', '▧', $permisos['informes'] ?? false],
@@ -178,6 +181,7 @@ $menuNavegacion = [
     ['Promociones', 'promociones.php', '★', $permisos['promociones'] ?? false],
     ['Cocina', 'cocina.php', '♨', $permisos['cocina'] ?? false],
     ['Cierre de Caja', 'cierre_caja.php', '▣', $permisos['cierre_caja'] ?? false],
+    ['Historial del sistema', 'historial.php', '◷', $canViewAuditHistory],
     ['Configuración', 'config.php', '⚙', $permisos['config'] ?? false],
     ['Cerrar Sesión', 'logout.php', '↪', true],
 ];
@@ -190,6 +194,7 @@ $accionesRapidas = [
     ['Ver informe de ventas', 'informes.php', '▥', $permisos['informes'] ?? false],
     ['Gestionar empleados', 'empleados.php', '♧', $permisos['empleados'] ?? false],
     ['Registrar merma', 'merma.php', '−', $permisos['mermas'] ?? false],
+    ['Registrar gastos', 'gastos.php', '$', $canManageExpenses],
 ];
 ?>
 <!DOCTYPE html>
@@ -204,8 +209,10 @@ $accionesRapidas = [
 
 <body class="app-layout">
     <aside class="sidebar">
-        <div class="sidebar-brand">RESTAURANTE POS</div>
-        <nav aria-label="Navegación principal">
+        <button class="sidebar-brand" type="button" aria-controls="main-navigation" aria-expanded="true">
+            RESTAURANTE POS <span class="sidebar-toggle-icon" aria-hidden="true">⌄</span>
+        </button>
+        <nav id="main-navigation" aria-label="Navegación principal">
             <?php foreach ($menuNavegacion as [$etiqueta, $url, $icono, $visible]): ?>
                 <?php if ($visible): ?>
                     <a href="<?= htmlspecialchars($url) ?>" class="<?= $url === 'dashboard.php' ? 'active' : '' ?>">

@@ -36,6 +36,30 @@ function printerMoney($value)
     return number_format((float) $value, 2, '.', '');
 }
 
+function printerRasterCommand($images, $type, $maxWidth, $maxHeight)
+{
+    $image = $images[$type] ?? null;
+    if (!is_array($image) || !is_string($image['data'] ?? null)) {
+        return null;
+    }
+    $width = filter_var($image['width'] ?? null, FILTER_VALIDATE_INT);
+    $height = filter_var($image['height'] ?? null, FILTER_VALIDATE_INT);
+    $bytesPerRow = filter_var($image['bytesPerRow'] ?? null, FILTER_VALIDATE_INT);
+    if (
+        $width === false || $height === false || $bytesPerRow === false
+        || $width < 1 || $width > $maxWidth || $height < 1 || $height > $maxHeight
+        || $bytesPerRow !== (int) ceil($width / 8)
+        || strlen($image['data']) > 40000
+    ) {
+        return false;
+    }
+    $bitmap = base64_decode($image['data'], true);
+    if ($bitmap === false || strlen($bitmap) !== $bytesPerRow * $height) {
+        return false;
+    }
+    return "\x1D\x76\x30\x00" . pack('v', $bytesPerRow) . pack('v', $height) . $bitmap;
+}
+
 try {
     $data = json_decode(file_get_contents('php://input'), true);
     if (!is_array($data)) {
@@ -130,6 +154,29 @@ try {
     $printPrefix = $station === 'recibo' ? 'recibo' : 'comanda';
     $paperWidth = (int) $config[$printPrefix . '_ancho_papel'];
     $fontSize = $config[$printPrefix . '_tamano_fuente'];
+    $receiptImages = [];
+    if ($station === 'recibo' && !$isTest) {
+        $imageInputs = is_array($data['imagenes_recibo'] ?? null) ? $data['imagenes_recibo'] : [];
+        $maximumImageWidth = $paperWidth === 58 ? 384 : 576;
+        foreach (['logo' => 120, 'qr' => 240] as $imageType => $maximumImageHeight) {
+            $configKey = $imageType === 'logo' ? 'recibo_logo_imagen' : 'recibo_qr_imagen';
+            $positionKey = $imageType === 'logo' ? 'recibo_logo_posicion' : 'recibo_qr_posicion';
+            if (empty($config[$configKey])) {
+                continue;
+            }
+            if (!isset($imageInputs[$imageType])) {
+                printerResponse('error', 'No se pudo preparar la imagen configurada para la impresora.', 400);
+            }
+            $imageCommand = printerRasterCommand($imageInputs, $imageType, $maximumImageWidth, $maximumImageHeight);
+            if ($imageCommand === false) {
+                printerResponse('error', 'Una imagen del recibo no tiene un formato imprimible.', 400);
+            }
+            if ($imageCommand !== null) {
+                $position = $config[$positionKey] ?? ($imageType === 'logo' ? 'encabezado' : 'pie');
+                $receiptImages[$position][] = $imageCommand;
+            }
+        }
+    }
     $baseLineWidth = $paperWidth === 58 ? 32 : 42;
     $lineWidth = $fontSize === 'pequena'
         ? (int) floor($baseLineWidth * 4 / 3)
@@ -149,7 +196,11 @@ try {
     if ($topFeedLines > 0) {
         $headerCommands .= "\x1B\x64" . chr(min(255, $topFeedLines));
     }
-    $lines = [$headerCommands . printerText($restaurant, $lineWidth)];
+    $lines = [$headerCommands];
+    foreach ($receiptImages['encabezado'] ?? [] as $imageCommand) {
+        $lines[] = "\x1B\x61\x01" . $imageCommand . "\x1B\x61\x01";
+    }
+    $lines[] = printerText($restaurant, $lineWidth);
     $lines[] = "\x1B\x45\x00" . printerText($isTest ? 'PRUEBA DE IMPRESION' : $title, $lineWidth);
     $lines[] = $separator;
     if (!$isTest) {
@@ -197,8 +248,12 @@ try {
         if (!empty($config['recibo_mostrar_descuentos']) && $discount > 0) {
             $lines[] = printerText('Descuento: -$' . printerMoney($discount), $lineWidth);
         }
-        if (!empty($config['recibo_mostrar_impuestos']) && $tax > 0) {
-            $lines[] = printerText('Impuesto: $' . printerMoney($tax), $lineWidth);
+        if (!empty($config['recibo_mostrar_impuestos'])) {
+            $lines[] = printerText('IVA: $' . printerMoney($tax), $lineWidth);
+        }
+        if (!empty($config['recibo_mostrar_propina'])) {
+            $tip = $isPreReceipt ? 0 : (validateDecimal($data['propina'] ?? 0, 0, 999999) ?? 0);
+            $lines[] = printerText('Propina: $' . printerMoney($tip), $lineWidth);
         }
         $lines[] = "\x1B\x45\x01" . printerText('TOTAL: $' . printerMoney($total), $lineWidth) . "\x1B\x45\x00";
         if (!$isPreReceipt && !empty($config['recibo_mostrar_pago'])) {
@@ -214,6 +269,9 @@ try {
         if ($footer !== '') {
             $lines[] = $separator;
             $lines[] = printerText($footer, $lineWidth);
+        }
+        foreach ($receiptImages['pie'] ?? [] as $imageCommand) {
+            $lines[] = "\x1B\x61\x01" . $imageCommand . "\x1B\x61\x00";
         }
     }
 
